@@ -33,7 +33,17 @@ class ConnectorManager:
 from app.scrapers.brasao_scraper import BrasaoScraper  # noqa
 from app.scrapers.superalfa_scraper import SuperAlfaScraper  # noqa
 from app.scrapers.mock_scraper import MockScraper  # noqa (mantido para testes)
+from app.scrapers.vtex_scraper import VtexScraper  # noqa
+from app.scrapers.unicooper_scraper import UnicooperScraper  # noqa
+from app.scrapers.osuper_scraper import OsuperScraper  # noqa
 
 ConnectorManager.register("brasao", BrasaoScraper)
 ConnectorManager.register("superalfa", SuperAlfaScraper)
 ConnectorManager.register("mock", MockScraper)
+ConnectorManager.register("vtex", VtexScraper)       # genérico VTEX (Comper, DeliveryFort, etc.)
+ConnectorManager.register("comper", VtexScraper)     # Comper Supermercados (VTEX)
+ConnectorManager.register("deliveryfort", VtexScraper)  # DeliveryFort (VTEX)
+ConnectorManager.register("unicooper", UnicooperScraper)  # Unicooper (Mercafacil)
+ConnectorManager.register("osuper", OsuperScraper)   # genérico osuper (Super Royal, Caita)
+ConnectorManager.register("superroyal", OsuperScraper)   # Super Royal
+ConnectorManager.register("caita", OsuperScraper)    # Caita Supermercados

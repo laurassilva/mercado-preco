@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { ExternalLink, TrendingDown, TrendingUp, Award, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
 import type { ProductResult, SearchResponse } from '@/types'
 import { formatBRL, formatDate } from '@/lib/utils'
@@ -17,6 +17,8 @@ interface Props {
 
 export default function ResultsTable({ data, onExportPDF, onExportExcel, onExportCSV }: Props) {
   const [sort, setSort] = useState<{ field: SortField; dir: SortDir }>({ field: 'price', dir: 'asc' })
+  const [productColWidth, setProductColWidth] = useState(260)
+  const dragRef = useRef<{ startX: number; startW: number } | null>(null)
 
   const toggleSort = (field: SortField) => {
     setSort((prev) =>
@@ -25,16 +27,39 @@ export default function ResultsTable({ data, onExportPDF, onExportExcel, onExpor
   }
 
   const sorted = [...data.results].sort((a, b) => {
-    const va = sort.field === 'price' ? a.price
-      : sort.field === 'difference' ? (a.difference ?? 0)
+    const va = sort.field === 'price' ? Number(a.price)
+      : sort.field === 'difference' ? Number(a.difference ?? 0)
       : String(a[sort.field]).toLowerCase()
-    const vb = sort.field === 'price' ? b.price
-      : sort.field === 'difference' ? (b.difference ?? 0)
+    const vb = sort.field === 'price' ? Number(b.price)
+      : sort.field === 'difference' ? Number(b.difference ?? 0)
       : String(b[sort.field]).toLowerCase()
     if (va < vb) return sort.dir === 'asc' ? -1 : 1
     if (va > vb) return sort.dir === 'asc' ? 1 : -1
     return 0
   })
+
+  // setPointerCapture garante que o drag continua mesmo saindo do elemento
+  const onResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const el = e.currentTarget
+    el.setPointerCapture(e.pointerId)
+    dragRef.current = { startX: e.clientX, startW: productColWidth }
+
+    const onMove = (ev: PointerEvent) => {
+      if (!dragRef.current) return
+      const delta = ev.clientX - dragRef.current.startX
+      setProductColWidth(Math.max(160, dragRef.current.startW + delta))
+    }
+
+    const onUp = () => {
+      dragRef.current = null
+      el.removeEventListener('pointermove', onMove)
+      el.removeEventListener('pointerup', onUp)
+    }
+
+    el.addEventListener('pointermove', onMove)
+    el.addEventListener('pointerup', onUp)
+  }
 
   const SortBtn = ({ field, label }: { field: SortField; label: string }) => {
     const active = sort.field === field
@@ -99,16 +124,14 @@ export default function ResultsTable({ data, onExportPDF, onExportExcel, onExpor
         </div>
       </div>
 
-      {/* MOBILE: cards empilhados */}
+      {/* MOBILE: cards */}
       <div className="md:hidden space-y-3">
         {sorted.map((item, idx) => (
           <div
             key={idx}
             className={cn(
               'rounded-xl border p-4 space-y-2',
-              item.is_cheapest
-                ? 'bg-green-50 border-green-300'
-                : 'bg-white border-gray-200'
+              item.is_cheapest ? 'bg-green-50 border-green-300' : 'bg-white border-gray-200'
             )}
           >
             <div className="flex items-start justify-between gap-2">
@@ -120,25 +143,18 @@ export default function ResultsTable({ data, onExportPDF, onExportExcel, onExpor
                 <p className={cn('font-bold text-lg', item.is_cheapest ? 'text-green-700' : 'text-gray-900')}>
                   {formatBRL(item.price)}
                 </p>
-                {item.is_cheapest && (
-                  <span className="text-xs text-green-600 font-medium">✓ Mais barato</span>
-                )}
+                {item.is_cheapest && <span className="text-xs text-green-600 font-medium">✓ Mais barato</span>}
               </div>
             </div>
             <div className="flex items-center justify-between text-xs text-gray-500">
               <span>
                 {item.difference != null && item.difference > 0
                   ? <span className="text-red-500">+{formatBRL(item.difference)} ({item.difference_pct?.toFixed(1)}%)</span>
-                  : <span className="text-green-600">Menor preço</span>
-                }
+                  : <span className="text-green-600">Menor preço</span>}
               </span>
               {item.product_url && (
-                <a
-                  href={item.product_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-brand-600 hover:text-brand-800 font-medium"
-                >
+                <a href={item.product_url} target="_blank" rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-brand-600 hover:text-brand-800 font-medium">
                   Ver produto <ExternalLink className="w-3 h-3" />
                 </a>
               )}
@@ -149,17 +165,56 @@ export default function ResultsTable({ data, onExportPDF, onExportExcel, onExpor
 
       {/* DESKTOP: tabela */}
       <div className="hidden md:block table-container">
-        <table className="data-table">
+        {/* Dica de redimensionamento */}
+        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 border-b border-blue-100 text-xs text-blue-600">
+          <span>↔</span>
+          <span>Arraste a barra azul na coluna <strong>Produto</strong> para ajustar a largura</span>
+        </div>
+
+        <table className="data-table" style={{ tableLayout: 'fixed', width: '100%', minWidth: '700px' }}>
+          <colgroup>
+            <col style={{ width: '38px' }} />
+            <col style={{ width: '190px' }} />
+            <col style={{ width: `${productColWidth}px` }} />
+            <col style={{ width: '100px' }} />
+            <col style={{ width: '100px' }} />
+            <col style={{ width: '120px' }} />
+            <col style={{ width: '80px' }} />
+          </colgroup>
           <thead>
             <tr>
-              <th className="w-8">#</th>
-              <th><SortBtn field="market_name" label="Mercado" /></th>
-              <th><SortBtn field="product_name" label="Produto" /></th>
-              <th>Marca</th>
-              <th><SortBtn field="price" label="Preço" /></th>
-              <th><SortBtn field="difference" label="Diferença" /></th>
-              <th>Atualiz.</th>
-              <th>Link</th>
+              <th style={{ whiteSpace: 'nowrap' }}>#</th>
+              <th style={{ whiteSpace: 'nowrap' }}><SortBtn field="market_name" label="Mercado" /></th>
+
+              {/* Coluna Produto com handle de resize na borda direita */}
+              <th style={{ position: 'relative', whiteSpace: 'nowrap', paddingRight: '20px' }}>
+                <SortBtn field="product_name" label="Produto" />
+                {/* Handle: barra vertical azul arrastável */}
+                <div
+                  onPointerDown={onResizePointerDown}
+                  style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: 0,
+                    bottom: 0,
+                    width: '8px',
+                    cursor: 'col-resize',
+                    backgroundColor: '#3b82f6',
+                    opacity: 0.5,
+                    borderRadius: '0 4px 4px 0',
+                    userSelect: 'none',
+                    touchAction: 'none',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+                  onMouseLeave={e => (e.currentTarget.style.opacity = '0.5')}
+                  title="Arraste para redimensionar"
+                />
+              </th>
+
+              <th style={{ whiteSpace: 'nowrap' }}>Qtd</th>
+              <th style={{ whiteSpace: 'nowrap' }}><SortBtn field="price" label="Preço" /></th>
+              <th style={{ whiteSpace: 'nowrap' }}><SortBtn field="difference" label="Diferença" /></th>
+              <th style={{ whiteSpace: 'nowrap' }}>Link</th>
             </tr>
           </thead>
           <tbody>
@@ -167,20 +222,32 @@ export default function ResultsTable({ data, onExportPDF, onExportExcel, onExpor
               <tr key={idx} className={cn(item.is_cheapest && 'cheapest')}>
                 <td className="text-gray-400 text-xs">{idx + 1}</td>
                 <td>
-                  <div className="flex items-center gap-2 min-w-[120px]">
+                  <div className="flex items-center gap-1.5">
                     {item.is_cheapest && (
                       <span className="badge-green text-xs whitespace-nowrap">✓ Mais barato</span>
                     )}
-                    <span className="font-medium text-gray-800 whitespace-nowrap">{item.market_name}</span>
+                    <span className="font-medium text-gray-800" style={{ wordBreak: 'break-word' }}>
+                      {item.market_name}
+                    </span>
                   </div>
                 </td>
-                <td className="max-w-[220px]">
-                  <p className="truncate font-medium text-gray-800" title={item.product_name}>{item.product_name}</p>
-                  {item.brand && <p className="text-xs text-gray-400">{item.brand}</p>}
+                {/* Célula do produto: sem truncate, texto quebra em linhas */}
+                <td style={{ overflow: 'hidden', paddingRight: '12px' }}>
+                  <p
+                    className="font-medium text-gray-800"
+                    style={{ wordBreak: 'break-word', whiteSpace: 'normal', lineHeight: '1.4' }}
+                  >
+                    {item.product_name}
+                  </p>
+                  {item.brand && (
+                    <p className="text-xs text-gray-400 mt-0.5">{item.brand}</p>
+                  )}
                 </td>
-                <td className="text-gray-500 text-xs whitespace-nowrap">{item.quantity || '-'}</td>
+                <td className="text-gray-500 text-xs" style={{ wordBreak: 'break-word', whiteSpace: 'normal' }}>
+                  {item.quantity || '-'}
+                </td>
                 <td>
-                  <span className={cn('font-bold', item.is_cheapest ? 'text-green-700' : 'text-gray-800')}>
+                  <span className={cn('font-bold whitespace-nowrap', item.is_cheapest ? 'text-green-700' : 'text-gray-800')}>
                     {formatBRL(item.price)}
                   </span>
                 </td>
@@ -196,16 +263,11 @@ export default function ResultsTable({ data, onExportPDF, onExportExcel, onExpor
                     <span className="text-green-600 text-sm font-medium">Menor</span>
                   )}
                 </td>
-                <td className="text-gray-400 text-xs whitespace-nowrap">{formatDate(item.last_updated)}</td>
                 <td>
                   {item.product_url ? (
-                    <a
-                      href={item.product_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-brand-600 hover:text-brand-800 font-medium whitespace-nowrap"
-                    >
-                      Ver produto <ExternalLink className="w-3 h-3" />
+                    <a href={item.product_url} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-brand-600 hover:text-brand-800 font-medium whitespace-nowrap">
+                      Ver <ExternalLink className="w-3 h-3" />
                     </a>
                   ) : '-'}
                 </td>

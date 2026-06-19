@@ -51,7 +51,12 @@ async def _scrape_market_async(market_id: str, query: str, job_id: str):
             products = await scraper.search(query)
             await scraper.close()
 
-            count = await _save_products(db, market.id, products)
+            inserted, updated = await _save_products(db, market.id, products)
+            count = inserted + updated
+            logger.info(
+                "scrape_market %s: %d inseridos, %d atualizados",
+                market.name, inserted, updated,
+            )
 
             if job:
                 job.status = "completed"
@@ -60,7 +65,7 @@ async def _scrape_market_async(market_id: str, query: str, job_id: str):
             await db.commit()
 
         except Exception as exc:
-            logger.error("scrape_market falhou para %s: %s", market_id, exc)
+            logger.error("scrape_market falhou para %s: %s", market_id, exc, exc_info=True)
             result = await db.execute(select(ScrapingJob).where(ScrapingJob.id == job_id))
             job = result.scalar_one_or_none()
             if job:
@@ -103,9 +108,7 @@ async def _crawl_all_async(market_id: str | None):
             markets = [result.scalar_one_or_none()]
             markets = [m for m in markets if m]
         else:
-            result = await db.execute(
-                select(Market).where(Market.is_active == True)
-            )
+            result = await db.execute(select(Market).where(Market.is_active == True))
             markets = result.scalars().all()
 
         total_saved = 0
@@ -125,7 +128,6 @@ async def _crawl_all_async(market_id: str | None):
                     market.scraper_class, market.name, market.config or {}
                 )
 
-                # Chama crawl_all() se o scraper suportar; senão usa search com termos comuns
                 if hasattr(scraper, "crawl_all"):
                     logger.info("Iniciando varredura completa: %s", market.name)
                     products = await scraper.crawl_all()
@@ -138,69 +140,128 @@ async def _crawl_all_async(market_id: str | None):
 
                 await scraper.close()
 
-                count = await _save_products(db, market.id, products)
+                inserted, updated = await _save_products(db, market.id, products)
+                count = inserted + updated
                 total_saved += count
 
                 job.status = "completed"
                 job.completed_at = datetime.now(timezone.utc)
                 job.results_count = count
                 await db.commit()
-                logger.info("%s: %d produtos salvos", market.name, count)
+                logger.info(
+                    "%s: varredura concluída — %d inseridos, %d atualizados",
+                    market.name, inserted, updated,
+                )
 
             except Exception as exc:
-                logger.error("Varredura falhou em %s: %s", market.name, exc)
+                logger.error("Varredura falhou em %s: %s", market.name, exc, exc_info=True)
                 job.status = "failed"
                 job.error_message = str(exc)
                 job.completed_at = datetime.now(timezone.utc)
                 await db.commit()
 
     await engine.dispose()
-    logger.info("Varredura completa finalizada. Total: %d produtos", total_saved)
+    logger.info("Varredura completa finalizada. Total: %d produtos processados", total_saved)
     return total_saved
 
 
 # ─── Helper: salva/atualiza produtos no banco ────────────────────────────────
 
-async def _save_products(db, market_id, products) -> int:
+async def _save_products(db, market_id, products) -> tuple[int, int]:
+    """
+    Insere produtos novos e atualiza existentes.
+
+    Deduplicação:
+    1. Tenta encontrar pelo product_url (mais preciso)
+    2. Fallback para (market_id, name) quando product_url é None
+
+    Retorna (inseridos, atualizados).
+    """
     from sqlalchemy import select
     from app.models.product import MarketProduct, PriceHistory
-    from datetime import datetime, timezone
+    from app.normalizer.product_normalizer import title_case
 
-    count = 0
+    inserted = 0
+    updated = 0
+
     for p in products:
-        existing = await db.execute(
-            select(MarketProduct).where(
-                MarketProduct.market_id == market_id,
-                MarketProduct.product_url == p.product_url,
-            )
-        )
-        mp = existing.scalar_one_or_none()
+        try:
+            mp = None
+            now = datetime.now(timezone.utc)
+            clean_name = title_case(p.product_name)
+            clean_brand = title_case(p.brand) if p.brand else None
 
-        if mp:
-            if mp.price != p.price:
-                db.add(PriceHistory(market_product_id=mp.id, price=mp.price))
-            mp.price = p.price
-            mp.name = p.product_name
-            mp.image_url = p.image_url or mp.image_url
-            mp.last_updated = datetime.now(timezone.utc)
-        else:
-            mp = MarketProduct(
-                market_id=market_id,
-                name=p.product_name,
-                brand=p.brand,
-                quantity=p.quantity,
-                price=p.price,
-                image_url=p.image_url,
-                product_url=p.product_url,
-            )
-            db.add(mp)
-            await db.flush()
-            db.add(PriceHistory(market_product_id=mp.id, price=p.price))
+            # 1ª tentativa: buscar por URL do produto
+            if p.product_url:
+                result = await db.execute(
+                    select(MarketProduct).where(
+                        MarketProduct.market_id == market_id,
+                        MarketProduct.product_url == p.product_url,
+                    )
+                )
+                mp = result.scalar_one_or_none()
 
-        count += 1
+            # 2ª tentativa: buscar pelo nome padronizado
+            if mp is None:
+                result = await db.execute(
+                    select(MarketProduct).where(
+                        MarketProduct.market_id == market_id,
+                        MarketProduct.name == clean_name,
+                    )
+                )
+                mp = result.scalar_one_or_none()
+
+            if mp:
+                if mp.price != p.price:
+                    logger.info(
+                        "Preço atualizado: [%s] %s → R$ %s → R$ %s",
+                        market_id, clean_name, mp.price, p.price,
+                    )
+                    db.add(PriceHistory(
+                        market_product_id=mp.id,
+                        price=mp.price,
+                        checked_at=now,
+                    ))
+
+                mp.price = p.price
+                mp.name = clean_name
+                mp.brand = clean_brand or mp.brand
+                mp.image_url = p.image_url or mp.image_url
+                mp.last_updated = now
+                if p.product_url and not mp.product_url:
+                    mp.product_url = p.product_url
+                updated += 1
+
+            else:
+                mp = MarketProduct(
+                    market_id=market_id,
+                    name=clean_name,
+                    brand=clean_brand,
+                    quantity=p.quantity,
+                    price=p.price,
+                    image_url=p.image_url,
+                    product_url=p.product_url,
+                )
+                db.add(mp)
+                await db.flush()
+                db.add(PriceHistory(
+                    market_product_id=mp.id,
+                    price=p.price,
+                    checked_at=now,
+                ))
+                logger.debug("Novo produto: [%s] %s — R$ %s", market_id, clean_name, p.price)
+                inserted += 1
+
+        except Exception as exc:
+            logger.error(
+                "Erro ao salvar produto '%s': %s",
+                getattr(p, "product_name", "?"), exc,
+            )
+            # Continua para o próximo produto em vez de abortar o lote inteiro
+            continue
 
     await db.commit()
-    return count
+    return inserted, updated
 
 
 # ─── Agendamento automático ──────────────────────────────────────────────────

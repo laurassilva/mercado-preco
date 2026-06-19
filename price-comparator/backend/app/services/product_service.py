@@ -1,15 +1,57 @@
 import asyncio
+import hashlib
+import json
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_
 
+from app.core.config import settings
 from app.models.market import Market
 from app.models.product import MarketProduct, ScrapingJob
 from app.models.search_history import SearchHistory
+from app.normalizer.product_normalizer import title_case
 from app.scrapers.connector_manager import ConnectorManager
+from app.scrapers.search_utils import filter_products, _key_terms
 from app.schemas.product import ProductResult as ProductResultSchema, SearchResponse
+
+logger = logging.getLogger(__name__)
+
+_CACHE_TTL = 300  # 5 minutos
+
+_redis_pool = None
+
+
+async def _get_redis():
+    global _redis_pool
+    if _redis_pool is None:
+        import redis.asyncio as aioredis
+        _redis_pool = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+    return _redis_pool
+
+
+async def _cache_get(key: str) -> str | None:
+    try:
+        r = await _get_redis()
+        return await r.get(key)
+    except Exception as exc:
+        logger.debug("Cache get falhou: %s", exc)
+        return None
+
+
+async def _cache_set(key: str, value: str) -> None:
+    try:
+        r = await _get_redis()
+        await r.setex(key, _CACHE_TTL, value)
+    except Exception as exc:
+        logger.debug("Cache set falhou: %s", exc)
+
+
+def _make_cache_key(query: str, market_ids) -> str:
+    raw = f"dbsearch:{query}:{sorted(str(m) for m in market_ids) if market_ids else ''}"
+    return hashlib.md5(raw.encode()).hexdigest()
 
 
 async def search_products(
@@ -24,18 +66,19 @@ async def search_products(
     else:
         results = await _db_search(query, db, market_ids)
 
-    results.sort(key=lambda x: x.price)
+    # Garantir ordenação numérica por preço
+    results.sort(key=lambda x: float(x.price))
 
     if results:
-        min_price = results[0].price
-        max_price = results[-1].price
-        avg_price = sum(r.price for r in results) / len(results)
+        min_price = float(results[0].price)
+        max_price = float(results[-1].price)
+        avg_price = sum(float(r.price) for r in results) / len(results)
         results[0].is_cheapest = True
 
         for r in results:
-            r.difference = r.price - min_price
+            r.difference = Decimal(str(float(r.price) - min_price)).quantize(Decimal("0.01"))
             r.difference_pct = (
-                float((r.price - min_price) / min_price * 100)
+                (float(r.price) - min_price) / min_price * 100
                 if max_price > min_price else 0.0
             )
 
@@ -77,10 +120,7 @@ async def _live_search(
             await scraper.close()
             return market, products
         except Exception as exc:
-            import logging
-            logging.getLogger(__name__).error(
-                "Live search falhou em %s: %s", market.name, exc
-            )
+            logger.error("Live search falhou em %s: %s", market.name, exc)
             return market, []
 
     raw = await asyncio.gather(*[fetch(m) for m in markets])
@@ -93,8 +133,8 @@ async def _live_search(
                     market_id=market.id,
                     market_name=market.name,
                     market_logo=market.logo_url,
-                    product_name=p.product_name,
-                    brand=p.brand,
+                    product_name=title_case(p.product_name),
+                    brand=title_case(p.brand) if p.brand else None,
                     quantity=p.quantity,
                     price=p.price,
                     image_url=p.image_url,
@@ -103,7 +143,8 @@ async def _live_search(
                 )
             )
 
-    return all_results
+    # Filtrar por relevância e compatibilidade de quantidade
+    return filter_products(query, all_results)
 
 
 async def _db_search(
@@ -111,12 +152,19 @@ async def _db_search(
 ) -> list[ProductResultSchema]:
     """
     Busca no banco local com dois níveis:
-    1. Filtra por termos-chave no banco (ILIKE OR) para trazer candidatos
-    2. Reclassifica e filtra por relevância com rapidfuzz (elimina irrelevantes)
+    1. Filtra candidatos no banco via ILIKE (acelerado por índice GIN trigrama)
+    2. Reclassifica e filtra por relevância + compatibilidade de quantidade
+    Usa Redis para cachear resultados por 5 minutos.
     """
-    from app.scrapers.search_utils import _key_terms, filter_products, product_score
+    cache_key = _make_cache_key(query, market_ids)
+    cached = await _cache_get(cache_key)
+    if cached:
+        try:
+            data = json.loads(cached)
+            return [ProductResultSchema.model_validate(item) for item in data]
+        except Exception:
+            pass  # cache corrompido → consulta fresca
 
-    # Extrai apenas os termos significativos (sem unidades como kg, ml, 2l)
     key_terms = _key_terms(query)
     all_terms = [t.strip() for t in query.split() if len(t.strip()) >= 2]
 
@@ -126,11 +174,10 @@ async def _db_search(
         .where(MarketProduct.is_available == True, Market.is_active == True)
     )
 
-    if key_terms:
-        # OR: qualquer termo-chave presente — traz candidatos amplos
-        from sqlalchemy import or_
+    search_terms = key_terms if key_terms else all_terms
+    if search_terms:
         stmt = stmt.where(
-            or_(*[MarketProduct.name.ilike(f"%{t}%") for t in key_terms])
+            or_(*[MarketProduct.name.ilike(f"%{t}%") for t in search_terms])
         )
 
     if market_ids:
@@ -141,14 +188,13 @@ async def _db_search(
     result = await db.execute(stmt)
     rows = result.all()
 
-    # Constrói objetos e aplica filtragem por relevância
     candidates = [
         ProductResultSchema(
             market_id=market.id,
             market_name=market.name,
             market_logo=market.logo_url,
-            product_name=mp.name,
-            brand=mp.brand,
+            product_name=title_case(mp.name),
+            brand=title_case(mp.brand) if mp.brand else None,
             quantity=mp.quantity,
             price=mp.price,
             image_url=mp.image_url,
@@ -158,26 +204,31 @@ async def _db_search(
         for mp, market in rows
     ]
 
-    # Filtra e ordena por relevância, depois por preço dentro dos relevantes
     if not candidates:
         return []
 
-    class _Proxy:
-        def __init__(self, obj): self._o = obj
-        @property
-        def product_name(self): return self._o.product_name
-        def __getattr__(self, n): return getattr(self._o, n)
-
-    # Usa o product_score para manter só produtos realmente relacionados
+    # Filtra por relevância + compatibilidade de quantidade (min_score 50)
+    from app.scrapers.search_utils import product_score
     scored = [(c, product_score(query, c.product_name)) for c in candidates]
     relevant = [(c, s) for c, s in scored if s >= 50.0]
 
     if not relevant:
         return []
 
-    # Ordena por preço (objetivo primário) dentro dos relevantes
     relevant.sort(key=lambda x: float(x[0].price))
-    return [c for c, _ in relevant]
+    results = [c for c, _ in relevant]
+
+    # Cacheia por 5 minutos
+    try:
+        payload = json.dumps(
+            [r.model_dump(mode="json") for r in results],
+            default=str,
+        )
+        await _cache_set(cache_key, payload)
+    except Exception as exc:
+        logger.debug("Falha ao cachear resultados: %s", exc)
+
+    return results
 
 
 async def trigger_scraping_jobs(query: str, market_ids: list | None, db: AsyncSession):

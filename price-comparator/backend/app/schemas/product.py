@@ -1,7 +1,11 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from pydantic import BaseModel
+from pydantic import BaseModel, field_serializer
+
+
+def _dec_to_float(v: Decimal | None) -> float | None:
+    return float(v) if v is not None else None
 
 
 class ProductResult(BaseModel):
@@ -19,6 +23,14 @@ class ProductResult(BaseModel):
     difference_pct: float | None = None
     is_cheapest: bool = False
 
+    @field_serializer("price")
+    def _price(self, v: Decimal) -> float:
+        return float(v)
+
+    @field_serializer("difference")
+    def _difference(self, v: Decimal | None) -> float | None:
+        return _dec_to_float(v)
+
 
 class SearchResponse(BaseModel):
     query: str
@@ -28,6 +40,10 @@ class SearchResponse(BaseModel):
     most_expensive_market: str | None = None
     avg_price: Decimal | None = None
     searched_at: datetime
+
+    @field_serializer("avg_price")
+    def _avg_price(self, v: Decimal | None) -> float | None:
+        return _dec_to_float(v)
 
 
 class MarketProductResponse(BaseModel):
@@ -44,6 +60,10 @@ class MarketProductResponse(BaseModel):
     is_available: bool
     last_updated: datetime
 
+    @field_serializer("price")
+    def _price(self, v: Decimal | None) -> float | None:
+        return _dec_to_float(v)
+
 
 class PriceHistoryResponse(BaseModel):
     model_config = {"from_attributes": True}
@@ -51,6 +71,10 @@ class PriceHistoryResponse(BaseModel):
     id: uuid.UUID
     price: Decimal
     checked_at: datetime
+
+    @field_serializer("price")
+    def _price(self, v: Decimal) -> float:
+        return float(v)
 
 
 class ScrapingJobCreate(BaseModel):

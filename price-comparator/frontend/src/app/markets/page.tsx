@@ -32,13 +32,17 @@ export default function MarketsPage() {
         toast.success('Mercado atualizado!')
       } else {
         await api.post('/markets/', data)
-        toast.success('Mercado cadastrado!')
+        toast.success('Mercado cadastrado! Coleta iniciada automaticamente.', { duration: 5000 })
       }
       setFormOpen(false)
       setEditing(undefined)
       load()
-    } catch {
-      toast.error('Erro ao salvar mercado')
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail
+      const msg = Array.isArray(detail)
+        ? detail.map((d: any) => d.msg).join(', ')
+        : (typeof detail === 'string' ? detail : 'Erro ao salvar mercado')
+      toast.error(msg)
     }
   }
 
@@ -48,8 +52,9 @@ export default function MarketsPage() {
       await api.delete(`/markets/${id}`)
       toast.success('Mercado excluído')
       load()
-    } catch {
-      toast.error('Erro ao excluir')
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail
+      toast.error(typeof detail === 'string' ? detail : 'Erro ao excluir mercado')
     }
   }
 
