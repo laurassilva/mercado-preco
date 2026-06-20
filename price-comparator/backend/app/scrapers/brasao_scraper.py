@@ -131,14 +131,13 @@ class BrasaoScraper(BaseScraper):
         """Pesquisa ao vivo no site do Brasão com filtragem estrita por relevância."""
         from app.scrapers.search_utils import filter_products
 
-        search_url = f"{BASE_URL}{STORE_PREFIX}?q={query.replace(' ', '+')}"
+        search_url = f"{BASE_URL}{STORE_PREFIX}/busca?q={query.replace(' ', '+')}"
         async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True) as client:
             products = await self._fetch_page(client, search_url)
 
         if not products:
             return []
 
-        # Filtra estritamente: sem fallback de "retornar qualquer coisa"
         return filter_products(query, products, min_score=55.0)
 
     async def crawl_all(self) -> list[ProductResult]:

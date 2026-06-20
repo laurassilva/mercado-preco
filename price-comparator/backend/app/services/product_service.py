@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+from sqlalchemy import and_, func, select, or_
 
 from app.core.config import settings
 from app.models.market import Market
@@ -176,14 +176,16 @@ async def _db_search(
 
     search_terms = key_terms if key_terms else all_terms
     if search_terms:
-        stmt = stmt.where(
-            or_(*[MarketProduct.name.ilike(f"%{t}%") for t in search_terms])
-        )
+        ilike_clauses = [func.f_unaccent(MarketProduct.name).ilike(f"%{t}%") for t in search_terms]
+        if len(ilike_clauses) >= 2:
+            stmt = stmt.where(and_(*ilike_clauses))
+        else:
+            stmt = stmt.where(ilike_clauses[0])
 
     if market_ids:
         stmt = stmt.where(Market.id.in_(market_ids))
 
-    stmt = stmt.order_by(MarketProduct.price).limit(1000)
+    stmt = stmt.order_by(MarketProduct.price).limit(500)
 
     result = await db.execute(stmt)
     rows = result.all()

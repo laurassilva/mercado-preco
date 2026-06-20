@@ -167,20 +167,40 @@ class OsuperScraper(BaseScraper):
                 "arroz", "feijao", "acucar", "sal", "oleo", "leite", "cafe",
                 "macarrao", "farinha", "sabao", "detergente", "cerveja", "refrigerante",
                 "frango", "carne", "queijo", "iogurte", "manteiga", "pao",
+                "suco", "agua", "vinho", "biscoito", "bolacha", "chocolate",
+                "margarina", "presunto", "mortadela", "salsicha", "linguica",
+                "shampoo", "condicionador", "desodorante", "papel", "amaciante",
+                "molho", "extrato", "catchup", "maionese", "vinagre", "azeite",
+                "cereal", "aveia", "granola", "cha", "achocolatado", "nescau",
+                "salgadinho", "pipoca", "amendoim", "sardinha", "atum", "milho",
+                "ervilha", "creme", "requeijao", "cream cheese", "tomate",
+                "batata", "cebola", "alho", "banana", "maca", "laranja",
+                "sorvete", "pizza", "lasanha", "hamburguer", "nuggets",
+                "whisky", "vodka", "gin", "tonica", "energetico",
+                "fralda", "absorvente", "escova", "creme dental",
+                "racao", "pet", "limpador", "alvejante", "esponja",
             ]
             for term in generic_terms:
-                url = self._sense_url("search")
-                data = await self._get(url, params={
-                    "search": term, "size": 50, "from": 0,
-                    "sortField": "sales_count", "sortOrder": "desc",
-                })
-                if data:
+                offset = 0
+                while offset < 500:
+                    url = self._sense_url("search")
+                    data = await self._get(url, params={
+                        "search": term, "size": 50, "from": offset,
+                        "sortField": "sales_count", "sortOrder": "desc",
+                    })
+                    if not data:
+                        break
                     hits = data.get("hits", [])
+                    if not hits:
+                        break
                     new = [h for h in hits if h.get("id") not in seen_ids]
                     for h in new:
                         seen_ids.add(h.get("id", ""))
                     all_results.extend(_parse_hits(new, self.market_name, self.base_url))
-                await asyncio.sleep(0.3)
+                    if len(hits) < 50:
+                        break
+                    offset += 50
+                    await asyncio.sleep(0.3)
             logger.info("OsuperScraper [%s]: %d produtos", self.market_name, len(all_results))
             return all_results
 

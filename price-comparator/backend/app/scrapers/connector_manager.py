@@ -36,6 +36,7 @@ from app.scrapers.mock_scraper import MockScraper  # noqa (mantido para testes)
 from app.scrapers.vtex_scraper import VtexScraper  # noqa
 from app.scrapers.unicooper_scraper import UnicooperScraper  # noqa
 from app.scrapers.osuper_scraper import OsuperScraper  # noqa
+from app.scrapers.vipcommerce_scraper import VipcommerceScraper  # noqa
 
 ConnectorManager.register("brasao", BrasaoScraper)
 ConnectorManager.register("superalfa", SuperAlfaScraper)
@@ -47,3 +48,5 @@ ConnectorManager.register("unicooper", UnicooperScraper)  # Unicooper (Mercafaci
 ConnectorManager.register("osuper", OsuperScraper)   # genérico osuper (Super Royal, Caita)
 ConnectorManager.register("superroyal", OsuperScraper)   # Super Royal
 ConnectorManager.register("caita", OsuperScraper)    # Caita Supermercados
+ConnectorManager.register("vipcommerce", VipcommerceScraper)  # genérico VIPCommerce
+ConnectorManager.register("passarela", VipcommerceScraper)    # Passarela Supermercados

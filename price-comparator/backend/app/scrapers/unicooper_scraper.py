@@ -137,18 +137,43 @@ class UnicooperScraper(BaseScraper):
         all_results: list[ProductResult] = []
         seen_names: set[str] = set()
 
-        for cat in CRAWL_CATEGORIES:
-            url = f"{BASE_URL}{cat}"
-            html = await self._fetch(url)
-            if not html:
-                continue
-            products = _parse_page(html, self.market_name)
-            new = [p for p in products if p.product_name not in seen_names]
-            for p in new:
-                seen_names.add(p.product_name)
-            all_results.extend(new)
-            logger.info("Unicooper %s: %d produtos", cat, len(new))
-            await asyncio.sleep(0.5)
+        search_terms = [
+            "arroz", "feijao", "acucar", "sal", "oleo", "leite", "cafe",
+            "macarrao", "farinha", "sabao", "detergente", "cerveja", "refrigerante",
+            "frango", "carne", "queijo", "iogurte", "manteiga", "pao",
+            "suco", "agua", "vinho", "biscoito", "bolacha", "chocolate",
+            "margarina", "presunto", "mortadela", "salsicha", "linguica",
+            "shampoo", "condicionador", "desodorante", "papel", "amaciante",
+            "molho", "extrato", "catchup", "maionese", "vinagre", "azeite",
+            "cereal", "aveia", "granola", "cha", "achocolatado", "nescau",
+            "salgadinho", "pipoca", "amendoim", "sardinha", "atum", "milho",
+            "ervilha", "creme", "requeijao", "cream cheese", "tomate",
+            "batata", "cebola", "alho", "banana", "maca", "laranja",
+            "sorvete", "pizza", "lasanha", "hamburguer", "nuggets",
+            "whisky", "vodka", "gin", "tonica", "energetico",
+            "fralda", "absorvente", "escova", "creme dental",
+            "racao", "pet", "limpador", "alvejante", "esponja",
+        ]
+
+        for term in search_terms:
+            page = 1
+            while True:
+                url = f"{BASE_URL}/loja/busca?q={term}&page={page}"
+                html = await self._fetch(url)
+                if not html:
+                    break
+                products = _parse_page(html, self.market_name)
+                if not products:
+                    break
+                new = [p for p in products if p.product_name not in seen_names]
+                for p in new:
+                    seen_names.add(p.product_name)
+                all_results.extend(new)
+                if len(products) < 20:
+                    break
+                page += 1
+                await asyncio.sleep(0.4)
+            await asyncio.sleep(0.3)
 
         logger.info("Unicooper total: %d produtos", len(all_results))
         return all_results

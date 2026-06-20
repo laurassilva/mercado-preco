@@ -1,12 +1,13 @@
 'use client'
-import { useState, useRef } from 'react'
-import { ExternalLink, TrendingDown, TrendingUp, Award, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
+import { useState, useRef, useMemo, useEffect } from 'react'
+import { ExternalLink, TrendingDown, TrendingUp, Award, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import type { ProductResult, SearchResponse } from '@/types'
 import { formatBRL, formatDate } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 
 type SortField = 'price' | 'market_name' | 'product_name' | 'difference'
 type SortDir = 'asc' | 'desc'
+const PAGE_SIZE_OPTIONS = [10, 15, 20, 50] as const
 
 interface Props {
   data: SearchResponse
@@ -17,8 +18,12 @@ interface Props {
 
 export default function ResultsTable({ data, onExportPDF, onExportExcel, onExportCSV }: Props) {
   const [sort, setSort] = useState<{ field: SortField; dir: SortDir }>({ field: 'price', dir: 'asc' })
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState<number>(10)
   const [productColWidth, setProductColWidth] = useState(260)
   const dragRef = useRef<{ startX: number; startW: number } | null>(null)
+
+  useEffect(() => { setPage(1) }, [data.query])
 
   const toggleSort = (field: SortField) => {
     setSort((prev) =>
@@ -26,7 +31,7 @@ export default function ResultsTable({ data, onExportPDF, onExportExcel, onExpor
     )
   }
 
-  const sorted = [...data.results].sort((a, b) => {
+  const sorted = useMemo(() => [...data.results].sort((a, b) => {
     const va = sort.field === 'price' ? Number(a.price)
       : sort.field === 'difference' ? Number(a.difference ?? 0)
       : String(a[sort.field]).toLowerCase()
@@ -36,7 +41,16 @@ export default function ResultsTable({ data, onExportPDF, onExportExcel, onExpor
     if (va < vb) return sort.dir === 'asc' ? -1 : 1
     if (va > vb) return sort.dir === 'asc' ? 1 : -1
     return 0
-  })
+  }), [data.results, sort])
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize))
+  const safePage = Math.min(page, totalPages)
+  const paginatedItems = sorted.slice((safePage - 1) * pageSize, safePage * pageSize)
+
+  const handlePageSize = (size: number) => {
+    setPageSize(size)
+    setPage(1)
+  }
 
   // setPointerCapture garante que o drag continua mesmo saindo do elemento
   const onResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -124,9 +138,19 @@ export default function ResultsTable({ data, onExportPDF, onExportExcel, onExpor
         </div>
       </div>
 
+      {/* Pagination controls */}
+      <PaginationBar
+        page={safePage}
+        totalPages={totalPages}
+        pageSize={pageSize}
+        totalItems={sorted.length}
+        onPageChange={setPage}
+        onPageSizeChange={handlePageSize}
+      />
+
       {/* MOBILE: cards */}
       <div className="md:hidden space-y-3">
-        {sorted.map((item, idx) => (
+        {paginatedItems.map((item, idx) => (
           <div
             key={idx}
             className={cn(
@@ -218,9 +242,9 @@ export default function ResultsTable({ data, onExportPDF, onExportExcel, onExpor
             </tr>
           </thead>
           <tbody>
-            {sorted.map((item, idx) => (
+            {paginatedItems.map((item, idx) => (
               <tr key={idx} className={cn(item.is_cheapest && 'cheapest')}>
-                <td className="text-gray-400 text-xs">{idx + 1}</td>
+                <td className="text-gray-400 text-xs">{(safePage - 1) * pageSize + idx + 1}</td>
                 <td>
                   <div className="flex items-center gap-1.5">
                     {item.is_cheapest && (
@@ -275,6 +299,131 @@ export default function ResultsTable({ data, onExportPDF, onExportExcel, onExpor
             ))}
           </tbody>
         </table>
+      </div>
+
+      {/* Bottom pagination */}
+      <PaginationBar
+        page={safePage}
+        totalPages={totalPages}
+        pageSize={pageSize}
+        totalItems={sorted.length}
+        onPageChange={setPage}
+        onPageSizeChange={handlePageSize}
+      />
+    </div>
+  )
+}
+
+
+function PaginationBar({
+  page,
+  totalPages,
+  pageSize,
+  totalItems,
+  onPageChange,
+  onPageSizeChange,
+}: {
+  page: number
+  totalPages: number
+  pageSize: number
+  totalItems: number
+  onPageChange: (p: number) => void
+  onPageSizeChange: (s: number) => void
+}) {
+  const start = (page - 1) * pageSize + 1
+  const end = Math.min(page * pageSize, totalItems)
+
+  const pageButtons = useMemo(() => {
+    const pages: (number | '...')[] = []
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i)
+    } else {
+      pages.push(1)
+      if (page > 3) pages.push('...')
+      for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) pages.push(i)
+      if (page < totalPages - 2) pages.push('...')
+      pages.push(totalPages)
+    }
+    return pages
+  }, [page, totalPages])
+
+  if (totalItems <= PAGE_SIZE_OPTIONS[0]) return null
+
+  return (
+    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 py-2">
+      <div className="flex items-center gap-2 text-sm text-gray-600">
+        <span>{start}–{end} de {totalItems}</span>
+        <span className="text-gray-300">|</span>
+        <span className="text-gray-500">Exibir:</span>
+        {PAGE_SIZE_OPTIONS.map((size) => (
+          <button
+            key={size}
+            onClick={() => onPageSizeChange(size)}
+            className={cn(
+              'px-2 py-0.5 rounded text-sm font-medium transition-colors',
+              pageSize === size
+                ? 'bg-brand-600 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            )}
+          >
+            {size}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => onPageChange(1)}
+          disabled={page <= 1}
+          className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          title="Primeira página"
+        >
+          <ChevronsLeft className="w-4 h-4" />
+        </button>
+        <button
+          onClick={() => onPageChange(page - 1)}
+          disabled={page <= 1}
+          className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          title="Página anterior"
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+
+        {pageButtons.map((p, i) =>
+          p === '...' ? (
+            <span key={`dots-${i}`} className="px-1.5 text-gray-400 text-sm">...</span>
+          ) : (
+            <button
+              key={p}
+              onClick={() => onPageChange(p)}
+              className={cn(
+                'min-w-[32px] h-8 rounded text-sm font-medium transition-colors',
+                page === p
+                  ? 'bg-brand-600 text-white'
+                  : 'hover:bg-gray-100 text-gray-700'
+              )}
+            >
+              {p}
+            </button>
+          )
+        )}
+
+        <button
+          onClick={() => onPageChange(page + 1)}
+          disabled={page >= totalPages}
+          className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          title="Próxima página"
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
+        <button
+          onClick={() => onPageChange(totalPages)}
+          disabled={page >= totalPages}
+          className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          title="Última página"
+        >
+          <ChevronsRight className="w-4 h-4" />
+        </button>
       </div>
     </div>
   )
