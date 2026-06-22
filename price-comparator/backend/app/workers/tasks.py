@@ -51,7 +51,7 @@ async def _scrape_market_async(market_id: str, query: str, job_id: str):
             products = await scraper.search(query)
             await scraper.close()
 
-            inserted, updated = await _save_products(db, market.id, products)
+            inserted, updated = await _save_products_bulk(db, market.id, products)
             count = inserted + updated
             logger.info(
                 "scrape_market %s: %d inseridos, %d atualizados",
@@ -82,11 +82,57 @@ async def _scrape_market_async(market_id: str, query: str, job_id: str):
 
 @celery_app.task(bind=True, name="app.workers.tasks.crawl_all_products")
 def crawl_all_products(self, market_id: str | None = None):
-    """
-    Varre TODOS os produtos de um ou todos os mercados,
-    sem precisar de termo de busca.
-    """
     return run_async(_crawl_all_async(market_id))
+
+
+async def _crawl_one_market(market, Session):
+    """Coleta um mercado inteiro e salva no banco."""
+    from app.models.product import ScrapingJob
+    from app.scrapers.connector_manager import ConnectorManager
+
+    async with Session() as db:
+        job = ScrapingJob(
+            market_id=market.id,
+            query="[varredura completa]",
+            status="running",
+            started_at=datetime.now(timezone.utc),
+        )
+        db.add(job)
+        await db.flush()
+
+        try:
+            scraper = ConnectorManager.get(
+                market.scraper_class, market.name, market.config or {}
+            )
+
+            if hasattr(scraper, "crawl_all"):
+                logger.info("Iniciando varredura: %s", market.name)
+                products = await scraper.crawl_all()
+            else:
+                products = []
+
+            await scraper.close()
+
+            inserted, updated = await _save_products_bulk(db, market.id, products)
+            count = inserted + updated
+
+            job.status = "completed"
+            job.completed_at = datetime.now(timezone.utc)
+            job.results_count = count
+            await db.commit()
+            logger.info(
+                "%s: %d inseridos, %d atualizados",
+                market.name, inserted, updated,
+            )
+            return count
+
+        except Exception as exc:
+            logger.error("Varredura falhou em %s: %s", market.name, exc, exc_info=True)
+            job.status = "failed"
+            job.error_message = str(exc)
+            job.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+            return 0
 
 
 async def _crawl_all_async(market_id: str | None):
@@ -94,10 +140,8 @@ async def _crawl_all_async(market_id: str | None):
     from sqlalchemy import select
     from app.core.config import settings
     from app.models.market import Market
-    from app.models.product import ScrapingJob
-    from app.scrapers.connector_manager import ConnectorManager
 
-    engine = create_async_engine(settings.DATABASE_URL)
+    engine = create_async_engine(settings.DATABASE_URL, pool_size=10)
     Session = async_sessionmaker(engine, expire_on_commit=False)
 
     async with Session() as db:
@@ -111,118 +155,64 @@ async def _crawl_all_async(market_id: str | None):
             result = await db.execute(select(Market).where(Market.is_active == True))
             markets = result.scalars().all()
 
-        total_saved = 0
+    tasks = [_crawl_one_market(m, Session) for m in markets]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for market in markets:
-            job = ScrapingJob(
-                market_id=market.id,
-                query="[varredura completa]",
-                status="running",
-                started_at=datetime.now(timezone.utc),
-            )
-            db.add(job)
-            await db.flush()
-
-            try:
-                scraper = ConnectorManager.get(
-                    market.scraper_class, market.name, market.config or {}
-                )
-
-                if hasattr(scraper, "crawl_all"):
-                    logger.info("Iniciando varredura completa: %s", market.name)
-                    products = await scraper.crawl_all()
-                else:
-                    logger.info("Scraper sem crawl_all, usando termos comuns: %s", market.name)
-                    products = []
-                    for term in ["arroz", "leite", "cafe", "oleo", "acucar", "feijao"]:
-                        results = await scraper.search(term)
-                        products.extend(results)
-
-                await scraper.close()
-
-                inserted, updated = await _save_products(db, market.id, products)
-                count = inserted + updated
-                total_saved += count
-
-                job.status = "completed"
-                job.completed_at = datetime.now(timezone.utc)
-                job.results_count = count
-                await db.commit()
-                logger.info(
-                    "%s: varredura concluída — %d inseridos, %d atualizados",
-                    market.name, inserted, updated,
-                )
-
-            except Exception as exc:
-                logger.error("Varredura falhou em %s: %s", market.name, exc, exc_info=True)
-                job.status = "failed"
-                job.error_message = str(exc)
-                job.completed_at = datetime.now(timezone.utc)
-                await db.commit()
-
+    total = sum(r for r in results if isinstance(r, int))
     await engine.dispose()
-    logger.info("Varredura completa finalizada. Total: %d produtos processados", total_saved)
-    return total_saved
+    logger.info("Varredura completa finalizada. Total: %d produtos processados", total)
+    return total
 
 
-# ─── Helper: salva/atualiza produtos no banco ────────────────────────────────
+# ─── Helper: salva/atualiza produtos no banco (BULK) ────────────────────────
 
-async def _save_products(db, market_id, products) -> tuple[int, int]:
+async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
     """
-    Insere produtos novos e atualiza existentes.
-
-    Deduplicação:
-    1. Tenta encontrar pelo product_url (mais preciso)
-    2. Fallback para (market_id, name) quando product_url é None
-
-    Retorna (inseridos, atualizados).
+    Salva produtos em lotes usando bulk operations.
+    Muito mais rápido que SELECT individual por produto.
     """
-    from sqlalchemy import select
+    from sqlalchemy import select, text
     from app.models.product import MarketProduct, PriceHistory
     from app.normalizer.product_normalizer import title_case
 
+    if not products:
+        return 0, 0
+
+    now = datetime.now(timezone.utc)
+
+    existing_by_url = {}
+    existing_by_name = {}
+    result = await db.execute(
+        select(MarketProduct).where(MarketProduct.market_id == market_id)
+    )
+    for mp in result.scalars().all():
+        if mp.product_url:
+            existing_by_url[mp.product_url] = mp
+        existing_by_name[(str(market_id), mp.name)] = mp
+
     inserted = 0
     updated = 0
+    batch_new: list[MarketProduct] = []
+    batch_history: list[PriceHistory] = []
 
     for p in products:
         try:
-            mp = None
-            now = datetime.now(timezone.utc)
             clean_name = title_case(p.product_name)
             clean_brand = title_case(p.brand) if p.brand else None
 
-            # 1ª tentativa: buscar por URL do produto
+            mp = None
             if p.product_url:
-                result = await db.execute(
-                    select(MarketProduct).where(
-                        MarketProduct.market_id == market_id,
-                        MarketProduct.product_url == p.product_url,
-                    )
-                )
-                mp = result.scalar_one_or_none()
-
-            # 2ª tentativa: buscar pelo nome padronizado
+                mp = existing_by_url.get(p.product_url)
             if mp is None:
-                result = await db.execute(
-                    select(MarketProduct).where(
-                        MarketProduct.market_id == market_id,
-                        MarketProduct.name == clean_name,
-                    )
-                )
-                mp = result.scalar_one_or_none()
+                mp = existing_by_name.get((str(market_id), clean_name))
 
             if mp:
                 if mp.price != p.price:
-                    logger.info(
-                        "Preço atualizado: [%s] %s → R$ %s → R$ %s",
-                        market_id, clean_name, mp.price, p.price,
-                    )
-                    db.add(PriceHistory(
+                    batch_history.append(PriceHistory(
                         market_product_id=mp.id,
                         price=mp.price,
                         checked_at=now,
                     ))
-
                 mp.price = p.price
                 mp.name = clean_name
                 mp.brand = clean_brand or mp.brand
@@ -231,9 +221,8 @@ async def _save_products(db, market_id, products) -> tuple[int, int]:
                 if p.product_url and not mp.product_url:
                     mp.product_url = p.product_url
                 updated += 1
-
             else:
-                mp = MarketProduct(
+                new_mp = MarketProduct(
                     market_id=market_id,
                     name=clean_name,
                     brand=clean_brand,
@@ -242,23 +231,28 @@ async def _save_products(db, market_id, products) -> tuple[int, int]:
                     image_url=p.image_url,
                     product_url=p.product_url,
                 )
-                db.add(mp)
-                await db.flush()
-                db.add(PriceHistory(
-                    market_product_id=mp.id,
-                    price=p.price,
-                    checked_at=now,
-                ))
-                logger.debug("Novo produto: [%s] %s — R$ %s", market_id, clean_name, p.price)
+                batch_new.append(new_mp)
+                if p.product_url:
+                    existing_by_url[p.product_url] = new_mp
+                existing_by_name[(str(market_id), clean_name)] = new_mp
                 inserted += 1
 
         except Exception as exc:
-            logger.error(
-                "Erro ao salvar produto '%s': %s",
-                getattr(p, "product_name", "?"), exc,
-            )
-            # Continua para o próximo produto em vez de abortar o lote inteiro
+            logger.error("Erro ao processar produto '%s': %s", getattr(p, "product_name", "?"), exc)
             continue
+
+    if batch_new:
+        db.add_all(batch_new)
+        await db.flush()
+        for mp in batch_new:
+            batch_history.append(PriceHistory(
+                market_product_id=mp.id,
+                price=mp.price,
+                checked_at=now,
+            ))
+
+    if batch_history:
+        db.add_all(batch_history)
 
     await db.commit()
     return inserted, updated
