@@ -12,7 +12,6 @@ from app.models.market import Market
 
 logger = logging.getLogger(__name__)
 
-# Apenas os dois mercados reais solicitados
 MARKETS = [
     {
         "name": "Brasão Supermercados – Avenida",
@@ -35,6 +34,75 @@ MARKETS = [
         "is_active": True,
         "config": {
             "base_url": "https://superalfanumclick.com.br",
+        },
+    },
+    {
+        "name": "Comper Supermercados",
+        "url": "https://www.comper.com.br",
+        "logo_url": None,
+        "integration_type": "scraping",
+        "scraper_class": "comper",
+        "is_active": True,
+        "config": {"base_url": "https://www.comper.com.br"},
+    },
+    {
+        "name": "DeliveryFort",
+        "url": "https://www.deliveryfort.com.br",
+        "logo_url": None,
+        "integration_type": "scraping",
+        "scraper_class": "deliveryfort",
+        "is_active": True,
+        "config": {"base_url": "https://www.deliveryfort.com.br"},
+    },
+    {
+        "name": "Unicooper Supermercados",
+        "url": "https://www.unicoopersupermercados.com.br",
+        "logo_url": None,
+        "integration_type": "scraping",
+        "scraper_class": "unicooper",
+        "is_active": True,
+        "config": {},
+    },
+    {
+        "name": "Super Royal",
+        "url": "https://superroyal.com.br",
+        "logo_url": None,
+        "integration_type": "scraping",
+        "scraper_class": "superroyal",
+        "is_active": True,
+        "config": {
+            "base_url": "https://superroyal.com.br",
+            "store_id": 18,
+            "instance_id": 8,
+        },
+    },
+    {
+        "name": "Caita Supermercados",
+        "url": "https://caitasupermercados.com.br",
+        "logo_url": None,
+        "integration_type": "scraping",
+        "scraper_class": "caita",
+        "is_active": True,
+        "config": {
+            "base_url": "https://caitasupermercados.com.br",
+            "store_id": 1102,
+            "instance_id": 19,
+        },
+    },
+    {
+        "name": "Passarela Supermercados",
+        "url": "https://www.passarelaemcasa.com.br",
+        "logo_url": None,
+        "integration_type": "scraping",
+        "scraper_class": "passarela",
+        "is_active": True,
+        "config": {
+            "domain": "passarelaemcasa.com.br",
+            "org_id": "344",
+            "filial_id": "1",
+            "cd_id": "1",
+            "login_key": "df072f85df9bf7dd71b6811c34bdbaa4f219d98775b56cff9dfa5f8ca1bf8469",
+            "base_url": "https://www.passarelaemcasa.com.br",
         },
     },
 ]
