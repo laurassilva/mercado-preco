@@ -293,7 +293,7 @@ function ProductHistoryModal({ product, onClose }: { product: ProductResult; onC
     price: h.price,
   })) || []
 
-  const prices = history?.history.map(h => h.price) || []
+  const prices = history?.history.map(h => Number(h.price)) || []
   const minPrice = prices.length ? Math.min(...prices) : null
   const maxPrice = prices.length ? Math.max(...prices) : null
   const avgPrice = prices.length ? prices.reduce((a, b) => a + b, 0) / prices.length : null
