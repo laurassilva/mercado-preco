@@ -13,13 +13,13 @@ import { useAuth } from '@/hooks/useAuth'
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/search', label: 'Pesquisar Preços', icon: Search },
-  { href: '/markets', label: 'Mercados', icon: ShoppingCart },
   { href: '/history', label: 'Histórico', icon: History },
   { href: '/alerts', label: 'Alertas', icon: Bell },
   { href: '/reports', label: 'Relatórios', icon: FileText },
 ]
 
 const adminItems = [
+  { href: '/markets', label: 'Mercados', icon: ShoppingCart },
   { href: '/users', label: 'Usuários', icon: Users },
   { href: '/scraping', label: 'Coleta', icon: Activity },
   { href: '/categories', label: 'Categorias', icon: Tag },

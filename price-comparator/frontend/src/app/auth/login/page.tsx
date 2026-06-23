@@ -7,7 +7,7 @@ import { login, isAuthenticated } from '@/services/auth'
 
 export default function LoginPage() {
   const router = useRouter()
-  const [form, setForm] = useState({ email: 'admin@empresa.com', password: 'Admin@123' })
+  const [form, setForm] = useState({ email: '', password: '' })
   const [showPass, setShowPass] = useState(false)
   const [loading, setLoading] = useState(false)
 
@@ -80,10 +80,8 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <div className="mt-6 p-4 bg-gray-50 rounded-xl text-xs text-gray-500 space-y-1">
-          <p className="font-semibold text-gray-700">Credenciais padrão:</p>
-          <p>Email: <span className="font-mono">admin@empresa.com</span></p>
-          <p>Senha: <span className="font-mono">Admin@123</span></p>
+        <div className="mt-6 p-4 bg-gray-50 rounded-xl text-xs text-gray-500 text-center">
+          <p>Acesse com suas credenciais fornecidas pelo administrador.</p>
         </div>
       </div>
     </div>
