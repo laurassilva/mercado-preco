@@ -285,6 +285,14 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
         db.add_all(batch_alerts)
 
     await db.commit()
+
+    # Auto-group new products
+    try:
+        from app.services.product_matching_service import group_products_for_market
+        await group_products_for_market(db, market_id)
+    except Exception as exc:
+        logger.debug("Auto-grouping failed: %s", exc)
+
     return inserted, updated
 
 

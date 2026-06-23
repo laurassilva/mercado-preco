@@ -160,6 +160,40 @@ export interface ProductPriceHistory {
   history: PriceHistoryEntry[]
 }
 
+// Product Groups (Produto Mestre)
+export interface ProductGroupSummary {
+  id: string
+  canonical_name: string
+  brand: string | null
+  quantity: string | null
+  category: string | null
+  market_count: number
+  min_price: number | null
+  max_price: number | null
+  avg_price: number | null
+}
+
+export interface ProductGroupPrices {
+  group_id: string
+  products: Array<{
+    id: string
+    market_name: string
+    product_name: string
+    brand: string | null
+    price: number | null
+    image_url: string | null
+    product_url: string | null
+    last_updated: string | null
+  }>
+}
+
+export interface GroupingStats {
+  total_groups: number
+  total_grouped: number
+  total_ungrouped: number
+  multi_market_groups: number
+}
+
 export interface PriceHistorySearchResponse {
   query: string
   period_days: number

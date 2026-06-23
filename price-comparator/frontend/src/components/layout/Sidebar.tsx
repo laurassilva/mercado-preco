@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, Search, ShoppingCart, History,
   FileText, Users, Activity, LogOut, ShoppingBag, X,
-  Bell, Tag,
+  Bell, Tag, Layers,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { logout } from '@/services/auth'
@@ -23,6 +23,7 @@ const adminItems = [
   { href: '/users', label: 'Usuários', icon: Users },
   { href: '/scraping', label: 'Coleta', icon: Activity },
   { href: '/categories', label: 'Categorias', icon: Tag },
+  { href: '/product-groups', label: 'Produtos Mestre', icon: Layers },
 ]
 
 interface Props {
