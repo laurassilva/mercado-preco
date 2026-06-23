@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Database, Globe, Download } from 'lucide-react'
+import { Database, Globe, Tag } from 'lucide-react'
 import toast from 'react-hot-toast'
 import AuthGuard from '@/components/layout/AuthGuard'
 import SearchBar from '@/components/search/SearchBar'
@@ -8,24 +8,27 @@ import ResultsTable from '@/components/search/ResultsTable'
 import MarketFilter from '@/components/search/MarketFilter'
 import { useSearch } from '@/hooks/useSearch'
 import api from '@/services/api'
-import type { Market } from '@/types'
+import type { Market, Category } from '@/types'
 
 export default function SearchPage() {
   const { results, loading, error, search } = useSearch()
   const [markets, setMarkets] = useState<Market[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
   const [selectedMarkets, setSelectedMarkets] = useState<string[]>([])
+  const [selectedCategory, setSelectedCategory] = useState('')
   const [lastQuery, setLastQuery] = useState('')
-  const [liveMode, setLiveMode] = useState(false) // padrão: banco de dados (mais rápido e preciso)
+  const [liveMode, setLiveMode] = useState(false)
 
   useEffect(() => {
     api.get<Market[]>('/markets/').then(({ data }) => setMarkets(data)).catch(() => {})
+    api.get<Category[]>('/categories/').then(({ data }) => setCategories(data)).catch(() => {})
   }, [])
 
   const handleSearch = (query: string) => {
     setLastQuery(query)
     const ids = selectedMarkets.length > 0 && selectedMarkets.length < markets.length
       ? selectedMarkets : undefined
-    search(query, ids, liveMode)
+    search(query, ids, liveMode, selectedCategory || undefined)
   }
 
   const handleExport = async (format: 'pdf' | 'excel' | 'csv') => {
@@ -53,7 +56,6 @@ export default function SearchPage() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
             <h2 className="text-base font-semibold text-gray-800">Buscar Produto</h2>
 
-            {/* Toggle modo de busca */}
             <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 self-start sm:self-auto">
               <button
                 onClick={() => setLiveMode(false)}
@@ -78,9 +80,26 @@ export default function SearchPage() {
 
           <div className="space-y-3">
             <SearchBar onSearch={handleSearch} loading={loading} />
-            {markets.length > 0 && (
-              <MarketFilter markets={markets} selected={selectedMarkets} onChange={setSelectedMarkets} />
-            )}
+            <div className="flex flex-wrap items-center gap-3">
+              {markets.length > 0 && (
+                <MarketFilter markets={markets} selected={selectedMarkets} onChange={setSelectedMarkets} />
+              )}
+              {categories.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <Tag className="w-4 h-4 text-gray-400" />
+                  <select
+                    value={selectedCategory}
+                    onChange={e => setSelectedCategory(e.target.value)}
+                    className="input py-1.5 text-sm w-auto"
+                  >
+                    <option value="">Todas categorias</option>
+                    {categories.map(c => (
+                      <option key={c.id} value={c.name}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
           </div>
 
           {!liveMode && (

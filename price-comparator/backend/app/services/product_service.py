@@ -59,12 +59,13 @@ async def search_products(
     db: AsyncSession,
     user_id=None,
     market_ids: list | None = None,
+    category: str | None = None,
     live: bool = True,
 ) -> SearchResponse:
     if live:
         results = await _live_search(query, db, market_ids)
     else:
-        results = await _db_search(query, db, market_ids)
+        results = await _db_search(query, db, market_ids, category)
 
     # Garantir ordenação numérica por preço
     results.sort(key=lambda x: float(x.price))
@@ -148,7 +149,7 @@ async def _live_search(
 
 
 async def _db_search(
-    query: str, db: AsyncSession, market_ids: list | None
+    query: str, db: AsyncSession, market_ids: list | None, category: str | None = None
 ) -> list[ProductResultSchema]:
     """
     Busca no banco local com dois níveis:
@@ -184,6 +185,9 @@ async def _db_search(
 
     if market_ids:
         stmt = stmt.where(Market.id.in_(market_ids))
+
+    if category:
+        stmt = stmt.where(MarketProduct.category == category)
 
     stmt = stmt.order_by(MarketProduct.price).limit(500)
 

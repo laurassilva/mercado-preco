@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, Search, ShoppingCart, History,
   FileText, Users, Activity, LogOut, ShoppingBag, X,
-  TrendingUp, Bell, Tag,
+  Bell, Tag,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { logout } from '@/services/auth'
@@ -15,7 +15,6 @@ const navItems = [
   { href: '/search', label: 'Pesquisar Preços', icon: Search },
   { href: '/markets', label: 'Mercados', icon: ShoppingCart },
   { href: '/history', label: 'Histórico', icon: History },
-  { href: '/price-history', label: 'Hist. Preços', icon: TrendingUp },
   { href: '/alerts', label: 'Alertas', icon: Bell },
   { href: '/reports', label: 'Relatórios', icon: FileText },
 ]

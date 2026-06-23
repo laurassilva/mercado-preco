@@ -8,13 +8,14 @@ export function useSearch() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const search = useCallback(async (query: string, marketIds?: string[], live = false) => {
+  const search = useCallback(async (query: string, marketIds?: string[], live = false, category?: string) => {
     if (!query.trim()) return
     setLoading(true)
     setError(null)
     try {
       const params: Record<string, string> = { q: query, live: String(live) }
       if (marketIds && marketIds.length > 0) params.market_ids = marketIds.join(',')
+      if (category) params.category = category
       const { data } = await api.get<SearchResponse>('/products/search', { params })
       setResults(data)
     } catch (err: unknown) {

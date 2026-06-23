@@ -16,6 +16,7 @@ router = APIRouter(prefix="/products", tags=["Produtos"])
 async def search(
     q: str = Query(..., min_length=2, description="Termo de busca"),
     market_ids: Optional[str] = Query(None, description="IDs separados por vírgula"),
+    category: Optional[str] = Query(None, description="Filtrar por categoria"),
     live: bool = Query(True, description="True=scraping ao vivo | False=banco de dados local"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -41,5 +42,6 @@ async def search(
         db=db,
         user_id=current_user.id,
         market_ids=parsed_market_ids,
+        category=category,
         live=live,
     )
