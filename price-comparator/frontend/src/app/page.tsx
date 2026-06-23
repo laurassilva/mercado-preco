@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Package, ShoppingCart, Search, Clock, TrendingDown, TrendingUp } from 'lucide-react'
+import { Package, ShoppingCart, Search, Clock, TrendingDown, TrendingUp, Bell, Tag } from 'lucide-react'
 import AuthGuard from '@/components/layout/AuthGuard'
 import StatsCard from '@/components/dashboard/StatsCard'
 import PriceChart from '@/components/dashboard/PriceChart'
@@ -11,11 +11,15 @@ import { formatDate, formatBRL } from '@/lib/utils'
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [alertsSummary, setAlertsSummary] = useState<any>(null)
+  const [categoryStats, setCategoryStats] = useState<any[]>([])
 
   useEffect(() => {
     api.get<DashboardData>('/dashboard/')
       .then(({ data }) => setData(data))
       .finally(() => setLoading(false))
+    api.get('/alerts/summary').then(({ data }) => setAlertsSummary(data)).catch(() => {})
+    api.get('/categories/stats').then(({ data }) => setCategoryStats(data)).catch(() => {})
   }, [])
 
   return (
@@ -132,6 +136,47 @@ export default function DashboardPage() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+
+          {/* Alerts Summary */}
+          {alertsSummary && alertsSummary.total_today > 0 && (
+            <div className="card">
+              <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                <Bell className="w-4 h-4" /> Alertas de Preço Hoje
+              </h3>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="text-center p-3 bg-blue-50 rounded-lg">
+                  <p className="text-2xl font-bold text-blue-700">{alertsSummary.total_today}</p>
+                  <p className="text-xs text-blue-500">Total</p>
+                </div>
+                <div className="text-center p-3 bg-red-50 rounded-lg">
+                  <p className="text-2xl font-bold text-red-700">{alertsSummary.increases_today}</p>
+                  <p className="text-xs text-red-500">Aumentos</p>
+                </div>
+                <div className="text-center p-3 bg-green-50 rounded-lg">
+                  <p className="text-2xl font-bold text-green-700">{alertsSummary.decreases_today}</p>
+                  <p className="text-xs text-green-500">Reduções</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Category Stats */}
+          {categoryStats.length > 0 && (
+            <div className="card">
+              <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                <Tag className="w-4 h-4" /> Produtos por Categoria
+              </h3>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                {categoryStats.map((cs: any) => (
+                  <div key={cs.category} className="p-3 border border-gray-100 rounded-lg">
+                    <p className="font-medium text-gray-800 text-sm">{cs.category}</p>
+                    <p className="text-xs text-gray-500">{cs.products_count} produtos</p>
+                    {cs.alerts_today > 0 && <p className="text-xs text-amber-600">{cs.alerts_today} alertas hoje</p>}
+                  </div>
+                ))}
               </div>
             </div>
           )}

@@ -34,6 +34,7 @@ class MarketProduct(Base):
     image_url: Mapped[str | None] = mapped_column(String(1000))
     product_url: Mapped[str | None] = mapped_column(String(1000))
     is_available: Mapped[bool] = mapped_column(Boolean, default=True)
+    category: Mapped[str | None] = mapped_column(String(100), nullable=True)
     last_updated: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
@@ -51,6 +52,28 @@ class PriceHistory(Base):
     checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     market_product = relationship("MarketProduct", back_populates="price_history")
+
+
+class PriceAlert(Base):
+    __tablename__ = "price_alerts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("market_products.id", ondelete="CASCADE"), nullable=False
+    )
+    market_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("markets.id", ondelete="CASCADE"), nullable=False
+    )
+    product_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    old_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    new_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    price_diff: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    price_diff_pct: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
+    alert_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    category: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    detected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
 
 
 class ScrapingJob(Base):

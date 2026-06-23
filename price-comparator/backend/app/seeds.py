@@ -1,5 +1,6 @@
 """Seeds executados uma vez na inicialização: cria admin e cadastra mercados reais."""
 import asyncio
+import json
 import logging
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
@@ -9,6 +10,8 @@ from app.core.config import settings
 from app.core.security import hash_password
 from app.models.user import User
 from app.models.market import Market
+from app.models.category import Category
+from app.services.category_service import DEFAULT_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +147,15 @@ async def run_seeds():
             if m.name in old_demo_names:
                 await db.delete(m)
                 logger.info("Mercado demo removido: %s", m.name)
+
+        # Categorias padrão
+        existing_cats = (await db.execute(select(Category))).scalars().all()
+        existing_cat_names = {c.name for c in existing_cats}
+
+        for name, keywords in DEFAULT_CATEGORIES.items():
+            if name not in existing_cat_names:
+                db.add(Category(name=name, keywords=json.dumps(keywords, ensure_ascii=False)))
+                logger.info("Categoria cadastrada: %s", name)
 
         await db.commit()
 

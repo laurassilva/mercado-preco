@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "app",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "echo", "server ready"],
+      "port": 80,
+      "autoPort": false
+    }
+  ]
+}

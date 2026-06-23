@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "app",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "echo", "nginx running on port 80"],
+      "port": 80
+    }
+  ]
+}

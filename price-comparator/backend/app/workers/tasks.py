@@ -171,14 +171,22 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
     Salva produtos em lotes usando bulk operations.
     Muito mais rápido que SELECT individual por produto.
     """
+    from decimal import Decimal
     from sqlalchemy import select, text
-    from app.models.product import MarketProduct, PriceHistory
+    from app.models.product import MarketProduct, PriceHistory, PriceAlert
     from app.normalizer.product_normalizer import title_case
+    from app.services.category_service import classify_product, load_categories
 
     if not products:
         return 0, 0
 
     now = datetime.now(timezone.utc)
+
+    # Load categories for classification
+    try:
+        cat_dict = await load_categories(db)
+    except Exception:
+        cat_dict = {}
 
     existing_by_url = {}
     existing_by_name = {}
@@ -194,6 +202,7 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
     updated = 0
     batch_new: list[MarketProduct] = []
     batch_history: list[PriceHistory] = []
+    batch_alerts: list[PriceAlert] = []
 
     for p in products:
         try:
@@ -213,6 +222,20 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
                         price=mp.price,
                         checked_at=now,
                     ))
+                    diff = p.price - mp.price
+                    pct = (float(diff) / float(mp.price) * 100) if mp.price != 0 else 0
+                    batch_alerts.append(PriceAlert(
+                        market_product_id=mp.id,
+                        market_id=market_id,
+                        product_name=clean_name,
+                        old_price=mp.price,
+                        new_price=p.price,
+                        price_diff=diff,
+                        price_diff_pct=Decimal(str(round(pct, 2))),
+                        alert_type="increase" if diff > 0 else "decrease",
+                        category=mp.category,
+                        detected_at=now,
+                    ))
                 mp.price = p.price
                 mp.name = clean_name
                 mp.brand = clean_brand or mp.brand
@@ -220,8 +243,11 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
                 mp.last_updated = now
                 if p.product_url and not mp.product_url:
                     mp.product_url = p.product_url
+                if mp.category is None and cat_dict:
+                    mp.category = classify_product(clean_name, cat_dict)
                 updated += 1
             else:
+                category = classify_product(clean_name, cat_dict) if cat_dict else None
                 new_mp = MarketProduct(
                     market_id=market_id,
                     name=clean_name,
@@ -230,6 +256,7 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
                     price=p.price,
                     image_url=p.image_url,
                     product_url=p.product_url,
+                    category=category,
                 )
                 batch_new.append(new_mp)
                 if p.product_url:
@@ -253,6 +280,9 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
 
     if batch_history:
         db.add_all(batch_history)
+
+    if batch_alerts:
+        db.add_all(batch_alerts)
 
     await db.commit()
     return inserted, updated
