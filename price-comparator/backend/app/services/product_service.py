@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -175,9 +176,13 @@ async def _db_search(
         .where(MarketProduct.is_available == True, Market.is_active == True)
     )
 
+    qty_re = re.compile(r"^\d+[a-z]{0,3}$")
     search_terms = key_terms if key_terms else all_terms
-    if search_terms:
-        ilike_clauses = [func.f_unaccent(MarketProduct.name).ilike(f"%{t}%") for t in search_terms]
+    name_terms = [t for t in search_terms if not qty_re.match(t)]
+    if not name_terms:
+        name_terms = search_terms
+    if name_terms:
+        ilike_clauses = [func.f_unaccent(MarketProduct.name).ilike(f"%{t}%") for t in name_terms]
         if len(ilike_clauses) >= 2:
             stmt = stmt.where(and_(*ilike_clauses))
         else:
