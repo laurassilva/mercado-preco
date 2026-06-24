@@ -14,5 +14,8 @@ export function useAuth() {
     setLoading(false)
   }, [])
 
-  return { user, loading, isAdmin: user?.role === 'admin' }
+  const isAdmin = user?.role === 'admin'
+  const isGestor = user?.role === 'gestor'
+
+  return { user, loading, isAdmin, isGestor }
 }

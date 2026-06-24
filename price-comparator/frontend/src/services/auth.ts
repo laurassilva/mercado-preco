@@ -26,3 +26,19 @@ export function getStoredUser(): Partial<User> | null {
 export function isAuthenticated(): boolean {
   return !!Cookies.get('token')
 }
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  await api.post('/auth/change-password', {
+    current_password: currentPassword,
+    new_password: newPassword,
+  })
+}
+
+export async function forgotPassword(email: string): Promise<{ token: string; expires_at: string }> {
+  const { data } = await api.post('/auth/forgot-password', { email })
+  return data
+}
+
+export async function resetPassword(token: string, newPassword: string): Promise<void> {
+  await api.post('/auth/reset-password', { token, new_password: newPassword })
+}

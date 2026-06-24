@@ -80,6 +80,16 @@ export default function LoginPage() {
           </button>
         </form>
 
+        <div className="mt-4 text-center">
+          <button
+            type="button"
+            onClick={() => router.push('/auth/forgot-password')}
+            className="text-sm text-brand-600 hover:text-brand-700 hover:underline"
+          >
+            Esqueceu a senha?
+          </button>
+        </div>
+
         <div className="mt-6 p-4 bg-gray-50 rounded-xl text-xs text-gray-500 text-center">
           <p>Acesse com suas credenciais fornecidas pelo administrador.</p>
         </div>

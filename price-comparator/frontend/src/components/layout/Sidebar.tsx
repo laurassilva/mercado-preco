@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, Search, ShoppingCart, History,
   FileText, Users, Activity, LogOut, ShoppingBag, X,
-  Bell, Tag, Layers,
+  Bell, Tag, Layers, Settings,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { logout } from '@/services/auth'
@@ -16,6 +16,7 @@ const navItems = [
   { href: '/history', label: 'Histórico', icon: History },
   { href: '/alerts', label: 'Alertas', icon: Bell },
   { href: '/reports', label: 'Relatórios', icon: FileText },
+  { href: '/settings', label: 'Configurações', icon: Settings },
 ]
 
 const adminItems = [
@@ -129,7 +130,7 @@ export default function Sidebar({ isOpen, onClose }: Props) {
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate">{user?.name}</p>
               <p className="text-xs text-blue-200 truncate">
-                {user?.role === 'admin' ? 'Administrador' : 'Usuário'}
+                {user?.role === 'admin' ? 'Administrador' : user?.role === 'gestor' ? 'Gestor' : 'Usuário'}
               </p>
             </div>
           </div>
