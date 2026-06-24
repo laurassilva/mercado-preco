@@ -143,6 +143,30 @@ class OsuperScraper(BaseScraper):
             logger.debug("OsuperScraper crawl cat %s page %s: %s", category, page, exc)
             return []
 
+    async def _search_term(self, term: str, seen_ids: set) -> list[ProductResult]:
+        results: list[ProductResult] = []
+        offset = 0
+        while offset < 500:
+            url = self._sense_url("search")
+            data = await self._get(url, params={
+                "search": term, "size": 50, "from": offset,
+                "sortField": "sales_count", "sortOrder": "desc",
+            })
+            if not data:
+                break
+            hits = data.get("hits", [])
+            if not hits:
+                break
+            new = [h for h in hits if h.get("id") not in seen_ids]
+            for h in new:
+                seen_ids.add(h.get("id", ""))
+            results.extend(_parse_hits(new, self.market_name, self.base_url))
+            if len(hits) < 50:
+                break
+            offset += 50
+            await asyncio.sleep(0.05)
+        return results
+
     async def crawl_all(self) -> list[ProductResult]:
         if not self.instance_id or not self.store_id:
             return []
@@ -150,7 +174,6 @@ class OsuperScraper(BaseScraper):
         all_results: list[ProductResult] = []
         seen_ids: set[str] = set()
 
-        # Get category list from sense API
         cat_url = self._sense_url("categories")
         cat_data = await self._get(cat_url)
         categories: list[str] = []
@@ -161,8 +184,7 @@ class OsuperScraper(BaseScraper):
                     categories.append(str(cid))
 
         if not categories:
-            # Fallback: try common category slugs via category search
-            logger.info("OsuperScraper [%s]: buscando por termos genéricos", self.market_name)
+            logger.info("OsuperScraper [%s]: buscando por termos genéricos em paralelo", self.market_name)
             generic_terms = [
                 "arroz", "feijao", "acucar", "sal", "oleo", "leite", "cafe",
                 "macarrao", "farinha", "sabao", "detergente", "cerveja", "refrigerante",
@@ -180,36 +202,24 @@ class OsuperScraper(BaseScraper):
                 "fralda", "absorvente", "escova", "creme dental",
                 "racao", "pet", "limpador", "alvejante", "esponja",
             ]
-            for term in generic_terms:
-                offset = 0
-                while offset < 500:
-                    url = self._sense_url("search")
-                    data = await self._get(url, params={
-                        "search": term, "size": 50, "from": offset,
-                        "sortField": "sales_count", "sortOrder": "desc",
-                    })
-                    if not data:
-                        break
-                    hits = data.get("hits", [])
-                    if not hits:
-                        break
-                    new = [h for h in hits if h.get("id") not in seen_ids]
-                    for h in new:
-                        seen_ids.add(h.get("id", ""))
-                    all_results.extend(_parse_hits(new, self.market_name, self.base_url))
-                    if len(hits) < 50:
-                        break
-                    offset += 50
-                    await asyncio.sleep(0.3)
+            sem = asyncio.Semaphore(5)
+
+            async def _do(t):
+                async with sem:
+                    return await self._search_term(t, seen_ids)
+
+            results = await asyncio.gather(*[_do(t) for t in generic_terms], return_exceptions=True)
+            for r in results:
+                if isinstance(r, list):
+                    all_results.extend(r)
             logger.info("OsuperScraper [%s]: %d produtos", self.market_name, len(all_results))
             return all_results
 
-        # Crawl by category
-        async with httpx.AsyncClient(
-            headers={**HEADERS, "Origin": self.base_url, "Referer": f"{self.base_url}/"},
-            timeout=20,
-        ) as client:
-            for cat in categories:
+        sem = asyncio.Semaphore(5)
+
+        async def _crawl_cat(client, cat):
+            async with sem:
+                cat_results = []
                 page = 0
                 while True:
                     hits = await self._crawl_category_page(client, cat, page)
@@ -218,12 +228,21 @@ class OsuperScraper(BaseScraper):
                     new = [h for h in hits if h.get("id") not in seen_ids]
                     for h in new:
                         seen_ids.add(h.get("id", ""))
-                    all_results.extend(_parse_hits(new, self.market_name, self.base_url))
+                    cat_results.extend(_parse_hits(new, self.market_name, self.base_url))
                     if len(hits) < 50:
                         break
                     page += 1
-                    await asyncio.sleep(0.3)
-                logger.info("OsuperScraper [%s] cat %s: %d total", self.market_name, cat, len(all_results))
+                    await asyncio.sleep(0.05)
+                return cat_results
+
+        async with httpx.AsyncClient(
+            headers={**HEADERS, "Origin": self.base_url, "Referer": f"{self.base_url}/"},
+            timeout=20,
+        ) as client:
+            results = await asyncio.gather(*[_crawl_cat(client, c) for c in categories], return_exceptions=True)
+            for r in results:
+                if isinstance(r, list):
+                    all_results.extend(r)
 
         logger.info("OsuperScraper [%s]: total %d produtos", self.market_name, len(all_results))
         return all_results

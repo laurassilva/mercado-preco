@@ -140,43 +140,50 @@ class BrasaoScraper(BaseScraper):
 
         return filter_products(query, products, min_score=55.0)
 
+    async def _crawl_category(self, client: httpx.AsyncClient, cat_path: str) -> list[ProductResult]:
+        results: list[ProductResult] = []
+        seen_urls: set[str] = set()
+        page = 1
+        empty_pages = 0
+        while True:
+            url = f"{BASE_URL}{cat_path}?page={page}"
+            products = await self._fetch_page(client, url)
+            if not products:
+                empty_pages += 1
+                if empty_pages >= 2:
+                    break
+                page += 1
+                continue
+            empty_pages = 0
+            new = [p for p in products if p.product_url not in seen_urls]
+            if not new and page > 1:
+                break
+            for p in new:
+                seen_urls.add(p.product_url)
+            results.extend(new)
+            page += 1
+            await asyncio.sleep(0.05)
+        return results
+
     async def crawl_all(self) -> list[ProductResult]:
-        """Varre TODAS as categorias paginando até o fim."""
+        """Varre TODAS as categorias em paralelo (4 simultâneas)."""
+        sem = asyncio.Semaphore(4)
         all_results: list[ProductResult] = []
         seen_urls: set[str] = set()
 
+        async def _do(client, cat):
+            async with sem:
+                return await self._crawl_category(client, cat)
+
         async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True) as client:
-            for cat_path in CRAWL_CATEGORIES:
-                logger.info("Brasão – categoria: %s", cat_path)
-                page = 1
-                empty_pages = 0
-
-                while True:
-                    url = f"{BASE_URL}{cat_path}?page={page}"
-                    products = await self._fetch_page(client, url)
-
-                    if not products:
-                        empty_pages += 1
-                        if empty_pages >= 2:
-                            break
-                        page += 1
-                        await asyncio.sleep(0.3)
-                        continue
-
-                    empty_pages = 0
-                    new = [p for p in products if p.product_url not in seen_urls]
-
-                    if not new and page > 1:
-                        # Página repetida — chegamos ao fim
-                        break
-
+            tasks = [_do(client, cat) for cat in CRAWL_CATEGORIES]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in results:
+                if isinstance(r, list):
+                    new = [p for p in r if p.product_url not in seen_urls]
                     for p in new:
                         seen_urls.add(p.product_url)
                     all_results.extend(new)
-
-                    logger.info("  pág %d: %d novos produtos (total %d)", page, len(new), len(all_results))
-                    page += 1
-                    await asyncio.sleep(0.35)
 
         logger.info("Brasão – varredura concluída: %d produtos", len(all_results))
         return all_results

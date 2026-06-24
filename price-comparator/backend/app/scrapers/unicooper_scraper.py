@@ -133,6 +133,27 @@ class UnicooperScraper(BaseScraper):
         products = _parse_page(html, self.market_name)
         return filter_products(query, products, min_score=55.0)
 
+    async def _crawl_term(self, term: str, seen_names: set) -> list[ProductResult]:
+        results: list[ProductResult] = []
+        page = 1
+        while True:
+            url = f"{BASE_URL}/loja/busca?q={term}&page={page}"
+            html = await self._fetch(url)
+            if not html:
+                break
+            products = _parse_page(html, self.market_name)
+            if not products:
+                break
+            new = [p for p in products if p.product_name not in seen_names]
+            for p in new:
+                seen_names.add(p.product_name)
+            results.extend(new)
+            if len(products) < 20:
+                break
+            page += 1
+            await asyncio.sleep(0.05)
+        return results
+
     async def crawl_all(self) -> list[ProductResult]:
         all_results: list[ProductResult] = []
         seen_names: set[str] = set()
@@ -155,25 +176,16 @@ class UnicooperScraper(BaseScraper):
             "racao", "pet", "limpador", "alvejante", "esponja",
         ]
 
-        for term in search_terms:
-            page = 1
-            while True:
-                url = f"{BASE_URL}/loja/busca?q={term}&page={page}"
-                html = await self._fetch(url)
-                if not html:
-                    break
-                products = _parse_page(html, self.market_name)
-                if not products:
-                    break
-                new = [p for p in products if p.product_name not in seen_names]
-                for p in new:
-                    seen_names.add(p.product_name)
-                all_results.extend(new)
-                if len(products) < 20:
-                    break
-                page += 1
-                await asyncio.sleep(0.4)
-            await asyncio.sleep(0.3)
+        sem = asyncio.Semaphore(3)
+
+        async def _do(t):
+            async with sem:
+                return await self._crawl_term(t, seen_names)
+
+        results = await asyncio.gather(*[_do(t) for t in search_terms], return_exceptions=True)
+        for r in results:
+            if isinstance(r, list):
+                all_results.extend(r)
 
         logger.info("Unicooper total: %d produtos", len(all_results))
         return all_results

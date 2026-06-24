@@ -101,20 +101,41 @@ class VtexScraper(BaseScraper):
 
         return filter_products(query, products, min_score=55.0)
 
+    async def _crawl_category(self, client: httpx.AsyncClient, cat_id: int, page_size: int = 50) -> list[ProductResult]:
+        results: list[ProductResult] = []
+        offset = 0
+        while offset < 2500:
+            try:
+                r = await client.get(
+                    f"{self.base_url}/api/catalog_system/pub/products/search/"
+                    f"?fq=C:{cat_id}&_from={offset}&_to={offset + page_size - 1}",
+                    timeout=20,
+                )
+                if r.status_code not in (200, 206):
+                    break
+                data = r.json()
+                if not isinstance(data, list) or not data:
+                    break
+                results.extend(self._parse_products(data))
+                if len(data) < page_size:
+                    break
+                offset += page_size
+                await asyncio.sleep(0.05)
+            except Exception as exc:
+                logger.debug("VtexScraper cat %s offset %s error: %s", cat_id, offset, exc)
+                break
+        return results
+
     async def crawl_all(self) -> list[ProductResult]:
-        """Varre por categorias usando a árvore de categorias VTEX, com paginação."""
+        """Varre por categorias em paralelo (5 simultâneas)."""
         if not self.base_url:
             return []
 
         cat_url = f"{self.base_url}/api/catalog_system/pub/category/tree/2"
-        all_results: list[ProductResult] = []
-        seen_names: set[str] = set()
-
         try:
             async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=20) as client:
                 r = await client.get(cat_url)
                 if r.status_code not in (200, 206):
-                    logger.warning("VtexScraper category tree HTTP %s", r.status_code)
                     return []
                 categories = r.json()
         except Exception as exc:
@@ -128,36 +149,23 @@ class VtexScraper(BaseScraper):
                 cat_ids.append(sub["id"])
 
         logger.info("VtexScraper [%s]: varrendo %d categorias", self.market_name, len(cat_ids))
+        sem = asyncio.Semaphore(5)
+        all_results: list[ProductResult] = []
+        seen_names: set[str] = set()
 
-        page_size = 50
+        async def _do(client, cid):
+            async with sem:
+                return await self._crawl_category(client, cid)
+
         async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=30) as client:
-            for cat_id in cat_ids:
-                offset = 0
-                while offset < 2500:
-                    try:
-                        r = await client.get(
-                            f"{self.base_url}/api/catalog_system/pub/products/search/"
-                            f"?fq=C:{cat_id}&_from={offset}&_to={offset + page_size - 1}",
-                            timeout=20,
-                        )
-                        if r.status_code not in (200, 206):
-                            break
-                        data = r.json()
-                        if not isinstance(data, list) or not data:
-                            break
-                        products = self._parse_products(data)
-                        new = [p for p in products if p.product_name not in seen_names]
-                        for p in new:
-                            seen_names.add(p.product_name)
-                        all_results.extend(new)
-                        if len(data) < page_size:
-                            break
-                        offset += page_size
-                        await asyncio.sleep(0.3)
-                    except Exception as exc:
-                        logger.debug("VtexScraper cat %s offset %s error: %s", cat_id, offset, exc)
-                        break
-                await asyncio.sleep(0.2)
+            tasks = [_do(client, cid) for cid in cat_ids]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in results:
+                if isinstance(r, list):
+                    new = [p for p in r if p.product_name not in seen_names]
+                    for p in new:
+                        seen_names.add(p.product_name)
+                    all_results.extend(new)
 
         logger.info("VtexScraper [%s]: total %d produtos", self.market_name, len(all_results))
         return all_results

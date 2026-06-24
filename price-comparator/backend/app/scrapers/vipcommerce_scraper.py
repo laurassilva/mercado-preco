@@ -141,6 +141,35 @@ class VipcommerceScraper(BaseScraper):
 
         return filter_products(query, products, min_score=55.0)
 
+    async def _crawl_term(self, client: httpx.AsyncClient, h: dict, term: str, seen_ids: set) -> list[ProductResult]:
+        results: list[ProductResult] = []
+        page = 1
+        while page <= 10:
+            url = (
+                f"{self._api_base}{self._path_prefix}"
+                f"/buscas/produtos/termo/{term}?page={page}"
+            )
+            try:
+                r = await client.get(url, headers=h)
+                if r.status_code != 200:
+                    break
+                data = r.json()
+                items = data.get("data", {}).get("produtos", [])
+                if not items:
+                    break
+                new_items = [it for it in items if it.get("produto_id") not in seen_ids]
+                for it in new_items:
+                    seen_ids.add(it.get("produto_id"))
+                results.extend(self._parse_products(new_items, f"https://{self.domain}"))
+                if len(items) < 20:
+                    break
+                page += 1
+                await asyncio.sleep(0.05)
+            except Exception as exc:
+                logger.debug("VipcommerceScraper search %s page %s: %s", term, page, exc)
+                break
+        return results
+
     async def crawl_all(self) -> list[ProductResult]:
         if not self.org_id or not self.domain:
             return []
@@ -173,46 +202,16 @@ class VipcommerceScraper(BaseScraper):
                 return []
 
             h = self._auth_headers(token)
+            sem = asyncio.Semaphore(4)
 
-            for term in search_terms:
-                page = 1
-                while page <= 10:
-                    url = (
-                        f"{self._api_base}{self._path_prefix}"
-                        f"/buscas/produtos/termo/{term}?page={page}"
-                    )
-                    try:
-                        r = await client.get(url, headers=h)
-                        if r.status_code != 200:
-                            break
-                        data = r.json()
-                        items = data.get("data", {}).get("produtos", [])
-                        if not items:
-                            break
-                        new_items = [
-                            it for it in items
-                            if it.get("produto_id") not in seen_ids
-                        ]
-                        for it in new_items:
-                            seen_ids.add(it.get("produto_id"))
-                        products = self._parse_products(
-                            new_items, f"https://{self.domain}"
-                        )
-                        all_results.extend(products)
-                        if len(items) < 20:
-                            break
-                        page += 1
-                        await asyncio.sleep(0.3)
-                    except Exception as exc:
-                        logger.debug(
-                            "VipcommerceScraper search %s page %s: %s",
-                            term, page, exc,
-                        )
-                        break
-                await asyncio.sleep(0.2)
+            async def _do(t):
+                async with sem:
+                    return await self._crawl_term(client, h, t, seen_ids)
 
-        logger.info(
-            "VipcommerceScraper [%s]: total %d produtos",
-            self.market_name, len(all_results),
-        )
+            results = await asyncio.gather(*[_do(t) for t in search_terms], return_exceptions=True)
+            for r in results:
+                if isinstance(r, list):
+                    all_results.extend(r)
+
+        logger.info("VipcommerceScraper [%s]: total %d produtos", self.market_name, len(all_results))
         return all_results
