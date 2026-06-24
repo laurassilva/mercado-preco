@@ -55,6 +55,7 @@ export interface ProductResult {
 
 export interface SearchResponse {
   query: string
+  corrected_query?: string | null
   results: ProductResult[]
   total: number
   cheapest_market: string | null

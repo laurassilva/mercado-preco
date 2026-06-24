@@ -16,6 +16,7 @@ export default function SearchPage() {
   const [selectedMarkets, setSelectedMarkets] = useState<string[]>([])
   const [lastQuery, setLastQuery] = useState('')
   const [liveMode, setLiveMode] = useState(false)
+  const [sortBy, setSortBy] = useState<'relevance' | 'price'>('relevance')
 
   useEffect(() => {
     api.get<Market[]>('/markets/').then(({ data }) => setMarkets(data)).catch(() => {})
@@ -45,6 +46,15 @@ export default function SearchPage() {
       toast.error('Erro ao gerar relatório')
     }
   }
+
+  const sortedResults = results ? {
+    ...results,
+    results: [...results.results].sort((a, b) =>
+      sortBy === 'price'
+        ? a.price - b.price
+        : (b.confidence_score || 0) - (a.confidence_score || 0)
+    )
+  } : null
 
   return (
     <AuthGuard title="Pesquisar Preços">
@@ -101,12 +111,42 @@ export default function SearchPage() {
         )}
 
         {results && (
-          <ResultsTable
-            data={results}
-            onExportPDF={() => handleExport('pdf')}
-            onExportExcel={() => handleExport('excel')}
-            onExportCSV={() => handleExport('csv')}
-          />
+          <div className="space-y-3">
+            {results.corrected_query && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2 text-sm">
+                <span className="text-amber-600">Mostrando resultados para:</span>
+                <button
+                  onClick={() => handleSearch(results.corrected_query!)}
+                  className="font-semibold text-brand-700 hover:underline"
+                >
+                  {results.corrected_query}
+                </button>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-gray-500">Ordenar:</span>
+              <button
+                onClick={() => setSortBy('relevance')}
+                className={`px-3 py-1 rounded-full transition-colors ${sortBy === 'relevance' ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+              >
+                Relevância
+              </button>
+              <button
+                onClick={() => setSortBy('price')}
+                className={`px-3 py-1 rounded-full transition-colors ${sortBy === 'price' ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+              >
+                Menor Preço
+              </button>
+            </div>
+
+            <ResultsTable
+              data={sortedResults!}
+              onExportPDF={() => handleExport('pdf')}
+              onExportExcel={() => handleExport('excel')}
+              onExportCSV={() => handleExport('csv')}
+            />
+          </div>
         )}
 
         {!loading && !results && !error && (
