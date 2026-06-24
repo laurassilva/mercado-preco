@@ -14,6 +14,99 @@ _STOP = {
     "und", "emb", "pacote", "caixa", "lata", "pet", "vidro", "tp",
 }
 
+# Sinônimos: mapeiam termos alternativos para o termo canônico
+SYNONYMS = {
+    "refri": "refrigerante",
+    "refrigerante": "refrigerante",
+    "achocolatado": "achocolatado",
+    "chocolate em po": "achocolatado",
+    "nescau": "achocolatado nescau",
+    "toddy": "achocolatado toddy",
+    "detergente lava loucas": "detergente",
+    "detergente louça": "detergente",
+    "lava loucas": "detergente",
+    "sabao em po": "sabao po",
+    "sabão em pó": "sabao po",
+    "oleo": "oleo soja",
+    "azeite": "azeite oliva",
+    "leite condensado": "leite condensado",
+    "creme de leite": "creme leite",
+    "extrato de tomate": "extrato tomate",
+    "molho de tomate": "molho tomate",
+    "papel higienico": "papel higienico",
+    "papel higiênico": "papel higienico",
+    "creme dental": "creme dental",
+    "pasta de dente": "creme dental",
+    "desodorante": "desodorante",
+    "cerveja": "cerveja",
+    "cerva": "cerveja",
+    "birita": "cerveja",
+    "queijo mussarela": "queijo mussarela",
+    "queijo muçarela": "queijo mussarela",
+    "mussarela": "queijo mussarela",
+    "muçarela": "queijo mussarela",
+    "presunto": "presunto",
+    "mortadela": "mortadela",
+    "linguica": "linguica",
+    "salsicha": "salsicha",
+    "macarrao": "macarrao",
+    "massa": "macarrao",
+    "iogurte": "iogurte",
+    "danone": "iogurte danone",
+}
+
+
+def _expand_synonyms(query: str) -> str:
+    """Expand query using synonym dictionary."""
+    q_lower = _normalize(query)
+    # Check full query first
+    if q_lower in SYNONYMS:
+        return SYNONYMS[q_lower]
+    # Check multi-word synonyms (longest match first)
+    result = q_lower
+    for syn, canonical in sorted(SYNONYMS.items(), key=lambda x: -len(x[0])):
+        syn_norm = _normalize(syn)
+        if syn_norm in result:
+            result = result.replace(syn_norm, _normalize(canonical))
+    return result
+
+
+def _correct_typo(term: str, known_terms: list[str] | None = None) -> str:
+    """Try to correct a misspelled term using fuzzy matching against common product words."""
+    if len(term) < 3:
+        return term
+
+    COMMON_WORDS = [
+        "coca", "cola", "pepsi", "guarana", "fanta", "sprite",
+        "cerveja", "refrigerante", "suco", "agua", "vinho", "leite",
+        "arroz", "feijao", "acucar", "sal", "oleo", "cafe", "farinha",
+        "macarrao", "biscoito", "bolacha", "chocolate", "margarina",
+        "manteiga", "queijo", "presunto", "mortadela", "iogurte",
+        "carne", "frango", "peixe", "linguica", "salsicha",
+        "sabao", "detergente", "amaciante", "desinfetante", "alvejante",
+        "shampoo", "condicionador", "desodorante", "creme", "sabonete",
+        "papel", "fralda", "absorvente", "esponja",
+        "integral", "desnatado", "zero", "light", "diet",
+        "original", "tradicional",
+        "nestle", "sadia", "perdigao", "aurora", "italac", "piracanjuba",
+        "camil", "tio", "joao", "dona", "benta", "pilao",
+        "ype", "omo", "brilhante", "ariel", "comfort", "downy",
+        "colgate", "oral", "dove", "nivea", "rexona", "pantene",
+        "skol", "brahma", "heineken", "budweiser",
+        "nescau", "toddy", "tang", "clight",
+    ]
+
+    candidates = known_terms or COMMON_WORDS
+    best_match = None
+    best_score = 0
+    for w in candidates:
+        score = fuzz.ratio(term, w)
+        if score > best_score and score >= 75:
+            best_score = score
+            best_match = w
+    return best_match if best_match else term
+
+
 _PET_MARKERS = re.compile(
     r"\b(para cao|para caes|para gato|para gatos|alimento cao|alimento caes|"
     r"racao|racoes|pet food|dog|cat food|coleira|antipulga|vermifugo|"
@@ -52,8 +145,13 @@ def _normalize(text: str) -> str:
 
 
 def _key_terms(query: str) -> list[str]:
-    words = _normalize(query).split()
-    return [w for w in words if len(w) >= 2 and w not in _STOP]
+    """Extract key terms with synonym expansion and typo correction."""
+    expanded = _expand_synonyms(query)
+    words = expanded.split()
+    terms = [w for w in words if len(w) >= 2 and w not in _STOP]
+    # Correct typos in each term
+    corrected = [_correct_typo(t) for t in terms]
+    return corrected
 
 
 def _term_present(term: str, p_norm: str) -> bool:
@@ -83,17 +181,21 @@ def product_score_v2(query: str, product_name: str) -> tuple[float, dict]:
     q_norm = _normalize(query)
     p_norm = _normalize(product_name)
 
-    # ---- HARD FILTERS ----
+    # ---- HARD FILTERS (return 0) ----
+
+    # Pet products
     if _PET_MARKERS.search(p_norm) and not _PET_MARKERS.search(q_norm):
         return 0.0, {}
 
+    # Kit/combo: product is kit but query doesn't ask for it
     if (p_parsed.is_kit or p_parsed.is_combo) and not (q_parsed.is_kit or q_parsed.is_combo):
         return 0.0, {}
 
+    # Returnable containers
     if _RETURNABLE_MARKERS_NORM.search(p_norm) and not _RETURNABLE_MARKERS_NORM.search(q_norm):
         return 0.0, {}
 
-    # Type mismatch
+    # Type mismatch: zero/diet vs regular
     if p_parsed.product_type and q_parsed.product_type:
         if p_parsed.product_type != q_parsed.product_type:
             return 0.0, {}
@@ -102,7 +204,7 @@ def product_score_v2(query: str, product_name: str) -> tuple[float, dict]:
     elif q_parsed.product_type in ("zero", "diet", "light") and not p_parsed.product_type:
         return 0.0, {}
 
-    # Volume mismatch
+    # Volume HARD filter: only when query specifies volume AND product has volume
     if q_parsed.volume_base is not None and p_parsed.volume_base is not None:
         if q_parsed.volume_base_unit == p_parsed.volume_base_unit:
             if q_parsed.volume_base != p_parsed.volume_base:
@@ -114,10 +216,10 @@ def product_score_v2(query: str, product_name: str) -> tuple[float, dict]:
     brand_score = 100.0
     if q_parsed.parsed_brand:
         if p_parsed.parsed_brand:
-            brand_score = fuzz.token_sort_ratio(
+            brand_score = float(fuzz.token_sort_ratio(
                 _normalize(q_parsed.parsed_brand),
                 _normalize(p_parsed.parsed_brand),
-            )
+            ))
         elif _normalize(q_parsed.parsed_brand) in p_norm:
             brand_score = 80.0
         else:
@@ -128,12 +230,18 @@ def product_score_v2(query: str, product_name: str) -> tuple[float, dict]:
     p_name = _normalize(p_parsed.parsed_name) if p_parsed.parsed_name else p_norm
     name_score = float(fuzz.token_set_ratio(q_name, p_name))
 
+    # Apply synonym expansion for better matching
+    q_expanded = _expand_synonyms(query)
+    if q_expanded != q_norm:
+        expanded_score = float(fuzz.token_set_ratio(q_expanded, p_norm))
+        name_score = max(name_score, expanded_score)
+
     key = _key_terms(query)
     if key:
         present = sum(1 for t in key if _term_present(t, p_norm))
         coverage = present / len(key) if key else 0
         name_score = name_score * (0.6 + 0.4 * coverage)
-        if len(key) >= 2 and coverage < 0.5:
+        if len(key) >= 2 and coverage < 0.4:
             return 0.0, {}
 
     # Volume (20%)
@@ -144,14 +252,17 @@ def product_score_v2(query: str, product_name: str) -> tuple[float, dict]:
                     and q_parsed.volume_base == p_parsed.volume_base):
                 volume_score = 100.0
             else:
-                volume_score = 0.0
+                volume_score = 0.0  # Already hard-filtered above
         else:
-            volume_score = 50.0
+            volume_score = 40.0  # Product doesn't specify volume
+    # If query has no volume, don't penalize — all volumes are OK
 
     # Type (10%)
     type_score = 100.0
     if q_parsed.product_type and p_parsed.product_type:
         type_score = 100.0 if q_parsed.product_type == p_parsed.product_type else 0.0
+    elif q_parsed.product_type and not p_parsed.product_type:
+        type_score = 50.0
 
     final = (brand_score * 0.40) + (name_score * 0.30) + (volume_score * 0.20) + (type_score * 0.10)
 
@@ -169,8 +280,8 @@ def product_score(query: str, product_name: str) -> float:
     return score
 
 
-def filter_products(query: str, products: list, min_score: float = 55.0) -> list:
+def filter_products(query: str, products: list, min_score: float = 50.0) -> list:
     scored = [(p, product_score(query, p.product_name)) for p in products]
     relevant = [(p, s) for p, s in scored if s >= min_score]
-    relevant.sort(key=lambda x: -x[1])
+    relevant.sort(key=lambda x: -x[1])  # Sort by relevance (highest first)
     return [p for p, _ in relevant]

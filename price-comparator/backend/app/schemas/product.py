@@ -35,6 +35,7 @@ class ProductResult(BaseModel):
 
 class SearchResponse(BaseModel):
     query: str
+    corrected_query: str | None = None
     results: list[ProductResult]
     total: int
     cheapest_market: str | None = None

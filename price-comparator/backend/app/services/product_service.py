@@ -15,12 +15,17 @@ from app.models.product import MarketProduct, ScrapingJob
 from app.models.search_history import SearchHistory
 from app.normalizer.product_normalizer import title_case
 from app.scrapers.connector_manager import ConnectorManager
-from app.scrapers.search_utils import filter_products, _key_terms
+from app.scrapers.search_utils import filter_products, _key_terms, product_score
 from app.schemas.product import ProductResult as ProductResultSchema, SearchResponse
 
 logger = logging.getLogger(__name__)
 
 _CACHE_TTL = 300  # 5 minutos
+
+_STOP_WORDS = {
+    "de", "do", "da", "dos", "das", "com", "sem", "para", "por",
+    "kg", "g", "gr", "ml", "lt", "l", "un", "pc", "cx", "pct",
+}
 
 _redis_pool = None
 
@@ -63,19 +68,31 @@ async def search_products(
     category: str | None = None,
     live: bool = True,
 ) -> SearchResponse:
+    from app.scrapers.search_utils import _expand_synonyms, _normalize, _correct_typo
+
+    # Correct typos and expand synonyms for display
+    q_norm = _normalize(query)
+    words = q_norm.split()
+    corrected_words = [_correct_typo(w) if len(w) >= 3 else w for w in words]
+    corrected = " ".join(corrected_words)
+    corrected_query = corrected if corrected != q_norm else None
+
     if live:
         results = await _live_search(query, db, market_ids)
     else:
         results = await _db_search(query, db, market_ids, category)
 
-    # Garantir ordenação numérica por preço
-    results.sort(key=lambda x: float(x.price))
+    # Sort by relevance first, then price as tiebreaker
+    results.sort(key=lambda x: (-(x.confidence_score or 0), float(x.price)))
 
     if results:
-        min_price = float(results[0].price)
-        max_price = float(results[-1].price)
+        min_price = min(float(r.price) for r in results)
+        max_price = max(float(r.price) for r in results)
         avg_price = sum(float(r.price) for r in results) / len(results)
-        results[0].is_cheapest = True
+
+        # Find cheapest item
+        cheapest_item = min(results, key=lambda x: float(x.price))
+        cheapest_item.is_cheapest = True
 
         for r in results:
             r.difference = Decimal(str(float(r.price) - min_price)).quantize(Decimal("0.01"))
@@ -84,8 +101,8 @@ async def search_products(
                 if max_price > min_price else 0.0
             )
 
-        cheapest = results[0].market_name
-        priciest = results[-1].market_name
+        cheapest = cheapest_item.market_name
+        priciest = max(results, key=lambda x: float(x.price)).market_name
     else:
         avg_price = cheapest = priciest = None
 
@@ -95,6 +112,7 @@ async def search_products(
 
     return SearchResponse(
         query=query,
+        corrected_query=corrected_query,
         results=results,
         total=len(results),
         cheapest_market=cheapest,
@@ -146,7 +164,6 @@ async def _live_search(
             )
 
     # Filtrar por relevância e compatibilidade de quantidade
-    from app.scrapers.search_utils import product_score
     filtered = filter_products(query, all_results)
     for r in filtered:
         r.confidence_score = round(product_score(query, r.product_name), 1)
@@ -157,10 +174,11 @@ async def _db_search(
     query: str, db: AsyncSession, market_ids: list | None, category: str | None = None
 ) -> list[ProductResultSchema]:
     """
-    Busca no banco local com dois níveis:
-    1. Filtra candidatos no banco via ILIKE (acelerado por índice GIN trigrama)
-    2. Reclassifica e filtra por relevância + compatibilidade de quantidade
-    Usa Redis para cachear resultados por 5 minutos.
+    Smart database search:
+    1. Expands synonyms and corrects typos
+    2. Pre-filters candidates via GIN trigram index (OR for broader recall)
+    3. Scores and ranks by relevance using weighted scoring
+    4. Caches results in Redis for 5 minutes
     """
     cache_key = _make_cache_key(query, market_ids)
     cached = await _cache_get(cache_key)
@@ -169,10 +187,22 @@ async def _db_search(
             data = json.loads(cached)
             return [ProductResultSchema.model_validate(item) for item in data]
         except Exception:
-            pass  # cache corrompido → consulta fresca
+            pass
+
+    from app.scrapers.search_utils import _expand_synonyms, _normalize
 
     key_terms = _key_terms(query)
-    all_terms = [t.strip() for t in query.split() if len(t.strip()) >= 2]
+
+    # Also get terms from synonym-expanded query
+    expanded = _expand_synonyms(query)
+    expanded_terms = [w for w in _normalize(expanded).split() if len(w) >= 2 and w not in _STOP_WORDS]
+
+    all_search_terms = list(set(key_terms + expanded_terms))
+
+    qty_re = re.compile(r"^\d+[a-z]{0,3}$")
+    name_terms = [t for t in all_search_terms if not qty_re.match(t)]
+    if not name_terms:
+        name_terms = all_search_terms[:3]  # fallback
 
     stmt = (
         select(MarketProduct, Market)
@@ -180,15 +210,13 @@ async def _db_search(
         .where(MarketProduct.is_available == True, Market.is_active == True)
     )
 
-    qty_re = re.compile(r"^\d+[a-z]{0,3}$")
-    search_terms = key_terms if key_terms else all_terms
-    name_terms = [t for t in search_terms if not qty_re.match(t)]
-    if not name_terms:
-        name_terms = search_terms
     if name_terms:
-        ilike_clauses = [func.f_unaccent(MarketProduct.name).ilike(f"%{t}%") for t in name_terms]
+        # Use OR between terms for broader recall, scoring will filter
+        ilike_clauses = [func.f_unaccent(MarketProduct.name).ilike(f"%{t}%") for t in name_terms[:5]]
         if len(ilike_clauses) >= 2:
-            stmt = stmt.where(and_(*ilike_clauses))
+            # Require at least the first (most important) term, OR the rest
+            primary = ilike_clauses[0]
+            stmt = stmt.where(and_(primary, or_(*ilike_clauses[1:])) if len(ilike_clauses) > 1 else primary)
         else:
             stmt = stmt.where(ilike_clauses[0])
 
@@ -198,7 +226,7 @@ async def _db_search(
     if category:
         stmt = stmt.where(MarketProduct.category == category)
 
-    stmt = stmt.order_by(MarketProduct.price).limit(500)
+    stmt = stmt.order_by(MarketProduct.price).limit(800)
 
     result = await db.execute(stmt)
     rows = result.all()
@@ -222,10 +250,9 @@ async def _db_search(
     if not candidates:
         return []
 
-    # Filtra por relevância + compatibilidade de quantidade (min_score 50)
-    from app.scrapers.search_utils import product_score
+    # Score and filter
     scored = [(c, product_score(query, c.product_name)) for c in candidates]
-    relevant = [(c, s) for c, s in scored if s >= 50.0]
+    relevant = [(c, s) for c, s in scored if s >= 45.0]
 
     if not relevant:
         return []
@@ -233,10 +260,11 @@ async def _db_search(
     for c, s in relevant:
         c.confidence_score = round(s, 1)
 
-    relevant.sort(key=lambda x: float(x[0].price))
+    # Sort by relevance first
+    relevant.sort(key=lambda x: -x[1])
     results = [c for c, _ in relevant]
 
-    # Cacheia por 5 minutos
+    # Cache
     try:
         payload = json.dumps(
             [r.model_dump(mode="json") for r in results],
