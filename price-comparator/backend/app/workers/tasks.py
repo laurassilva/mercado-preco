@@ -216,7 +216,7 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
                 mp = existing_by_name.get((str(market_id), clean_name))
 
             if mp:
-                if mp.price != p.price:
+                if mp.price != p.price and mp.id is not None:
                     batch_history.append(PriceHistory(
                         market_product_id=mp.id,
                         price=mp.price,
