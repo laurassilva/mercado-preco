@@ -157,9 +157,20 @@ export default function ResultsTable({ data, onExportPDF, onExportExcel, onExpor
                 <p className="text-xs text-gray-500 mt-0.5">{item.market_name}</p>
               </div>
               <div className="text-right flex-shrink-0">
-                <p className={cn('font-bold text-lg', item.is_cheapest ? 'text-green-700' : 'text-gray-900')}>
-                  {formatBRL(item.price)}
-                </p>
+                <div className="flex items-center gap-1.5 justify-end">
+                  <p className={cn('font-bold text-lg', item.is_cheapest ? 'text-green-700' : 'text-gray-900')}>
+                    {formatBRL(item.price)}
+                  </p>
+                  {item.confidence_score != null && (
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                      item.confidence_score >= 80 ? 'bg-green-100 text-green-800' :
+                      item.confidence_score >= 60 ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-orange-100 text-orange-800'
+                    }`}>
+                      {Math.round(item.confidence_score)}%
+                    </span>
+                  )}
+                </div>
                 {item.is_cheapest && <span className="text-xs text-green-600 font-medium">✓ Mais barato</span>}
               </div>
             </div>
@@ -184,6 +195,7 @@ export default function ResultsTable({ data, onExportPDF, onExportExcel, onExpor
             <col style={{ width: `${productColWidth}px` }} />
             <col style={{ width: '100px' }} />
             <col style={{ width: '100px' }} />
+            <col style={{ width: '90px' }} />
             <col style={{ width: '120px' }} />
             <col style={{ width: '80px' }} />
           </colgroup>
@@ -203,6 +215,7 @@ export default function ResultsTable({ data, onExportPDF, onExportExcel, onExpor
               </th>
               <th style={{ whiteSpace: 'nowrap' }}>Qtd</th>
               <th style={{ whiteSpace: 'nowrap' }}><SortBtn field="price" label="Preço" /></th>
+              <th style={{ whiteSpace: 'nowrap' }} className="text-right">Confiança</th>
               <th style={{ whiteSpace: 'nowrap' }}><SortBtn field="difference" label="Diferença" /></th>
               <th style={{ whiteSpace: 'nowrap' }}>Link</th>
             </tr>
@@ -226,6 +239,17 @@ export default function ResultsTable({ data, onExportPDF, onExportExcel, onExpor
                 <td className="text-gray-500 text-xs" style={{ wordBreak: 'break-word', whiteSpace: 'normal' }}>{item.quantity || '-'}</td>
                 <td>
                   <span className={cn('font-bold whitespace-nowrap', item.is_cheapest ? 'text-green-700' : 'text-gray-800')}>{formatBRL(item.price)}</span>
+                </td>
+                <td className="text-right">
+                  {item.confidence_score != null && (
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                      item.confidence_score >= 80 ? 'bg-green-100 text-green-800' :
+                      item.confidence_score >= 60 ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-orange-100 text-orange-800'
+                    }`}>
+                      {Math.round(item.confidence_score)}%
+                    </span>
+                  )}
                 </td>
                 <td className="whitespace-nowrap">
                   {item.difference != null && item.difference > 0 ? (

@@ -2,9 +2,16 @@ export interface User {
   id: string
   email: string
   name: string
-  role: 'admin' | 'user'
+  role: 'admin' | 'gestor' | 'user'
   is_active: boolean
   created_at: string
+  phone?: string | null
+  company?: string | null
+  position?: string | null
+  status?: 'active' | 'inactive' | 'blocked' | 'pending'
+  last_login_at?: string | null
+  must_change_password?: boolean
+  login_attempts?: number
 }
 
 export interface AuthToken {
@@ -43,6 +50,7 @@ export interface ProductResult {
   difference: number | null
   difference_pct: number | null
   is_cheapest: boolean
+  confidence_score?: number | null
 }
 
 export interface SearchResponse {
@@ -192,6 +200,16 @@ export interface GroupingStats {
   total_grouped: number
   total_ungrouped: number
   multi_market_groups: number
+}
+
+export interface AccessLog {
+  id: string
+  user_id: string | null
+  ip_address: string | null
+  user_agent: string | null
+  action: string
+  details: string | null
+  created_at: string
 }
 
 export interface PriceHistorySearchResponse {
