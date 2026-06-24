@@ -279,9 +279,11 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
             ))
 
     if batch_history:
+        batch_history = [h for h in batch_history if h.market_product_id is not None]
         db.add_all(batch_history)
 
     if batch_alerts:
+        batch_alerts = [a for a in batch_alerts if a.market_product_id is not None]
         db.add_all(batch_alerts)
 
     await db.commit()
