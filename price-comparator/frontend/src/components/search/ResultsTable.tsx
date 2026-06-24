@@ -154,6 +154,7 @@ export default function ResultsTable({ data, onExportPDF, onExportExcel, onExpor
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-gray-900 text-sm leading-tight">{item.product_name}</p>
+                {item.brand && <p className="text-xs text-gray-400">{item.brand}</p>}
                 <p className="text-xs text-gray-500 mt-0.5">{item.market_name}</p>
               </div>
               <div className="text-right flex-shrink-0">
