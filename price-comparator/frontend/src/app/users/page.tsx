@@ -507,7 +507,7 @@ function EditUserModal({ user, onClose, onSuccess }: { user: UserType; onClose: 
           </div>
           <div>
             <label className="label">Status</label>
-            <select className="input" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+            <select className="input" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as 'active' | 'inactive' | 'blocked' | 'pending' })}>
               <option value="active">Ativo</option>
               <option value="inactive">Inativo</option>
               <option value="blocked">Bloqueado</option>
