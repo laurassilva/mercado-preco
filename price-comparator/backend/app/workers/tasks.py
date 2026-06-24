@@ -66,13 +66,17 @@ async def _scrape_market_async(market_id: str, query: str, job_id: str):
 
         except Exception as exc:
             logger.error("scrape_market falhou para %s: %s", market_id, exc, exc_info=True)
-            result = await db.execute(select(ScrapingJob).where(ScrapingJob.id == job_id))
-            job = result.scalar_one_or_none()
-            if job:
-                job.status = "failed"
-                job.error_message = str(exc)
-                job.completed_at = datetime.now(timezone.utc)
-            await db.commit()
+            await db.rollback()
+            try:
+                result = await db.execute(select(ScrapingJob).where(ScrapingJob.id == job_id))
+                job = result.scalar_one_or_none()
+                if job:
+                    job.status = "failed"
+                    job.error_message = str(exc)[:500]
+                    job.completed_at = datetime.now(timezone.utc)
+                await db.commit()
+            except Exception:
+                pass
             raise
 
     await engine.dispose()
@@ -128,10 +132,14 @@ async def _crawl_one_market(market, Session):
 
         except Exception as exc:
             logger.error("Varredura falhou em %s: %s", market.name, exc, exc_info=True)
-            job.status = "failed"
-            job.error_message = str(exc)
-            job.completed_at = datetime.now(timezone.utc)
-            await db.commit()
+            await db.rollback()
+            try:
+                job.status = "failed"
+                job.error_message = str(exc)[:500]
+                job.completed_at = datetime.now(timezone.utc)
+                await db.commit()
+            except Exception:
+                pass
             return 0
 
 
@@ -286,14 +294,7 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
         batch_alerts = [a for a in batch_alerts if a.market_product_id is not None]
         db.add_all(batch_alerts)
 
-    await db.commit()
-
-    # Auto-group new products
-    try:
-        from app.services.product_matching_service import group_products_for_market
-        await group_products_for_market(db, market_id)
-    except Exception as exc:
-        logger.debug("Auto-grouping failed: %s", exc)
+    await db.flush()
 
     return inserted, updated
 
