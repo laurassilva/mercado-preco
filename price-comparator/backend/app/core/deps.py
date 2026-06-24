@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,10 +26,20 @@ async def get_current_user(
     user = result.scalar_one_or_none()
     if not user:
         raise credentials_exc
+    if user.status == "blocked":
+        raise credentials_exc
+    if user.locked_until and user.locked_until > datetime.now(timezone.utc):
+        raise credentials_exc
     return user
 
 
 async def require_admin(current_user: User = Depends(get_current_user)) -> User:
     if current_user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Acesso restrito a administradores")
+    return current_user
+
+
+async def require_admin_or_gestor(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.role not in ("admin", "gestor"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Acesso restrito")
     return current_user

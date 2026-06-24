@@ -182,7 +182,7 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
     from decimal import Decimal
     from sqlalchemy import select, text
     from app.models.product import MarketProduct, PriceHistory, PriceAlert
-    from app.normalizer.product_normalizer import title_case
+    from app.normalizer.product_normalizer import title_case, parse_product
     from app.services.category_service import classify_product, load_categories
 
     if not products:
@@ -216,6 +216,7 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
         try:
             clean_name = title_case(p.product_name)
             clean_brand = title_case(p.brand) if p.brand else None
+            parsed = parse_product(p.product_name)
 
             mp = None
             if p.product_url:
@@ -253,6 +254,17 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
                     mp.product_url = p.product_url
                 if mp.category is None and cat_dict:
                     mp.category = classify_product(clean_name, cat_dict)
+                mp.parsed_brand = parsed.parsed_brand or mp.parsed_brand
+                mp.parsed_name = parsed.parsed_name or mp.parsed_name
+                mp.volume_value = parsed.volume_value or mp.volume_value
+                mp.volume_unit = parsed.volume_unit or mp.volume_unit
+                mp.volume_base = parsed.volume_base or mp.volume_base
+                mp.volume_base_unit = parsed.volume_base_unit or mp.volume_base_unit
+                mp.product_type = parsed.product_type or mp.product_type
+                mp.is_kit = parsed.is_kit
+                mp.is_combo = parsed.is_combo
+                mp.pack_quantity = parsed.pack_quantity or mp.pack_quantity
+                mp.normalized_at = now
                 updated += 1
             else:
                 category = classify_product(clean_name, cat_dict) if cat_dict else None
@@ -265,6 +277,17 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
                     image_url=p.image_url,
                     product_url=p.product_url,
                     category=category,
+                    parsed_brand=parsed.parsed_brand,
+                    parsed_name=parsed.parsed_name,
+                    volume_value=parsed.volume_value,
+                    volume_unit=parsed.volume_unit,
+                    volume_base=parsed.volume_base,
+                    volume_base_unit=parsed.volume_base_unit,
+                    product_type=parsed.product_type,
+                    is_kit=parsed.is_kit,
+                    is_combo=parsed.is_combo,
+                    pack_quantity=parsed.pack_quantity,
+                    normalized_at=now,
                 )
                 batch_new.append(new_mp)
                 if p.product_url:
@@ -306,3 +329,68 @@ def refresh_all_prices():
     """Agendado pelo Celery Beat: varre tudo a cada 6 horas."""
     logger.info("Iniciando varredura automática agendada...")
     crawl_all_products.delay(None)
+
+
+# ─── Tarefa: re-normalização de produtos existentes ────────────────────────
+
+@celery_app.task(name="app.workers.tasks.normalize_existing_products")
+def normalize_existing_products():
+    """Re-normalize all existing products that haven't been normalized yet."""
+    return run_async(_normalize_existing_async())
+
+
+async def _normalize_existing_async():
+    from app.normalizer.product_normalizer import parse_product
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from sqlalchemy import select, func
+    from app.core.config import settings
+    from app.models.product import MarketProduct
+
+    engine = create_async_engine(settings.DATABASE_URL)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    now = datetime.now(timezone.utc)
+    total = 0
+
+    async with Session() as db:
+        result = await db.execute(
+            select(func.count()).select_from(MarketProduct).where(MarketProduct.normalized_at == None)
+        )
+        pending = result.scalar() or 0
+        logger.info("Re-normalization: %d products pending", pending)
+
+    batch_size = 500
+    while True:
+        async with Session() as db:
+            result = await db.execute(
+                select(MarketProduct)
+                .where(MarketProduct.normalized_at == None)
+                .limit(batch_size)
+            )
+            products = result.scalars().all()
+            if not products:
+                break
+
+            for mp in products:
+                try:
+                    parsed = parse_product(mp.name)
+                    mp.parsed_brand = parsed.parsed_brand
+                    mp.parsed_name = parsed.parsed_name
+                    mp.volume_value = parsed.volume_value
+                    mp.volume_unit = parsed.volume_unit
+                    mp.volume_base = parsed.volume_base
+                    mp.volume_base_unit = parsed.volume_base_unit
+                    mp.product_type = parsed.product_type
+                    mp.is_kit = parsed.is_kit
+                    mp.is_combo = parsed.is_combo
+                    mp.pack_quantity = parsed.pack_quantity
+                    mp.normalized_at = now
+                except Exception as exc:
+                    logger.debug("Normalize failed for %s: %s", mp.name, exc)
+
+            await db.commit()
+            total += len(products)
+            logger.info("Re-normalized %d products (total: %d)", len(products), total)
+
+    await engine.dispose()
+    logger.info("Re-normalization complete: %d products processed", total)
+    return total

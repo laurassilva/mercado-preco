@@ -8,6 +8,9 @@ class UserCreate(BaseModel):
     name: str
     password: str
     role: str = "user"
+    phone: str | None = None
+    company: str | None = None
+    position: str | None = None
 
 
 class UserUpdate(BaseModel):
@@ -16,6 +19,10 @@ class UserUpdate(BaseModel):
     role: str | None = None
     is_active: bool | None = None
     password: str | None = None
+    phone: str | None = None
+    company: str | None = None
+    position: str | None = None
+    status: str | None = None
 
 
 class UserResponse(BaseModel):
@@ -27,3 +34,10 @@ class UserResponse(BaseModel):
     role: str
     is_active: bool
     created_at: datetime
+    phone: str | None = None
+    company: str | None = None
+    position: str | None = None
+    status: str | None = None
+    last_login_at: datetime | None = None
+    must_change_password: bool | None = None
+    login_attempts: int | None = None

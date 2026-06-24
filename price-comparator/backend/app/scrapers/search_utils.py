@@ -70,71 +70,103 @@ def _query_mentions(query: str, pattern: re.Pattern) -> bool:
     return bool(pattern.search(query))
 
 
-def product_score(query: str, product_name: str) -> float:
+def product_score_v2(query: str, product_name: str) -> tuple[float, dict]:
     """
-    Retorna score de 0-100 de relevância entre query e nome do produto.
+    Weighted scoring: 40% brand, 30% name, 20% volume, 10% type.
+    Returns (score_0_to_100, breakdown_dict).
+    """
+    from app.normalizer.product_normalizer import parse_product
 
-    Filtra automaticamente:
-    - Kits/packs/combos (a menos que a query mencione kit/pack)
-    - Zero/Diet/Light quando a query pede original (e vice-versa)
-    - Retornáveis (a menos que a query mencione retornável)
-    - Produtos pet quando a query não menciona pet
-    """
-    from app.normalizer.product_normalizer import quantities_are_equivalent
+    q_parsed = parse_product(query)
+    p_parsed = parse_product(product_name)
 
     q_norm = _normalize(query)
     p_norm = _normalize(product_name)
 
-    # --- Filtros de exclusão ---
-
-    # Pet
+    # ---- HARD FILTERS ----
     if _PET_MARKERS.search(p_norm) and not _PET_MARKERS.search(q_norm):
-        return 0.0
+        return 0.0, {}
 
-    # Kits: exclui se produto é kit mas query não pede kit
-    if _KIT_MARKERS.search(product_name) and not _query_mentions(query, _KIT_MARKERS):
-        return 0.0
+    if (p_parsed.is_kit or p_parsed.is_combo) and not (q_parsed.is_kit or q_parsed.is_combo):
+        return 0.0, {}
 
-    # Retornáveis: exclui se produto é retornável mas query não pede (usa texto normalizado)
     if _RETURNABLE_MARKERS_NORM.search(p_norm) and not _RETURNABLE_MARKERS_NORM.search(q_norm):
-        return 0.0
+        return 0.0, {}
 
-    # Zero/Diet vs Original
-    product_is_zero = bool(_ZERO_MARKERS_NORM.search(p_norm)) or bool(_ZERO_MARKERS_RAW.search(product_name))
-    query_is_zero = bool(_ZERO_MARKERS_NORM.search(q_norm)) or bool(_ZERO_MARKERS_RAW.search(query))
-    if product_is_zero and not query_is_zero:
-        return 0.0
-    if query_is_zero and not product_is_zero:
-        return 0.0
+    # Type mismatch
+    if p_parsed.product_type and q_parsed.product_type:
+        if p_parsed.product_type != q_parsed.product_type:
+            return 0.0, {}
+    elif p_parsed.product_type in ("zero", "diet", "light") and not q_parsed.product_type:
+        return 0.0, {}
+    elif q_parsed.product_type in ("zero", "diet", "light") and not p_parsed.product_type:
+        return 0.0, {}
 
-    # --- Scoring normal ---
+    # Volume mismatch
+    if q_parsed.volume_base is not None and p_parsed.volume_base is not None:
+        if q_parsed.volume_base_unit == p_parsed.volume_base_unit:
+            if q_parsed.volume_base != p_parsed.volume_base:
+                return 0.0, {}
 
-    base = fuzz.token_set_ratio(q_norm, p_norm)
+    # ---- WEIGHTED SCORING ----
+
+    # Brand (40%)
+    brand_score = 100.0
+    if q_parsed.parsed_brand:
+        if p_parsed.parsed_brand:
+            brand_score = fuzz.token_sort_ratio(
+                _normalize(q_parsed.parsed_brand),
+                _normalize(p_parsed.parsed_brand),
+            )
+        elif _normalize(q_parsed.parsed_brand) in p_norm:
+            brand_score = 80.0
+        else:
+            brand_score = 0.0
+
+    # Name (30%)
+    q_name = _normalize(q_parsed.parsed_name) if q_parsed.parsed_name else q_norm
+    p_name = _normalize(p_parsed.parsed_name) if p_parsed.parsed_name else p_norm
+    name_score = float(fuzz.token_set_ratio(q_name, p_name))
 
     key = _key_terms(query)
-    if not key:
-        return base
+    if key:
+        present = sum(1 for t in key if _term_present(t, p_norm))
+        coverage = present / len(key) if key else 0
+        name_score = name_score * (0.6 + 0.4 * coverage)
+        if len(key) >= 2 and coverage < 0.5:
+            return 0.0, {}
 
-    qty_match = quantities_are_equivalent(query, product_name)
-    if qty_match is False:
-        return 0.0
+    # Volume (20%)
+    volume_score = 100.0
+    if q_parsed.volume_base is not None:
+        if p_parsed.volume_base is not None:
+            if (q_parsed.volume_base_unit == p_parsed.volume_base_unit
+                    and q_parsed.volume_base == p_parsed.volume_base):
+                volume_score = 100.0
+            else:
+                volume_score = 0.0
+        else:
+            volume_score = 50.0
 
-    present = sum(1 for t in key if _term_present(t, p_norm))
-    coverage = present / len(key)
+    # Type (10%)
+    type_score = 100.0
+    if q_parsed.product_type and p_parsed.product_type:
+        type_score = 100.0 if q_parsed.product_type == p_parsed.product_type else 0.0
 
-    if coverage == 0:
-        return 0.0
+    final = (brand_score * 0.40) + (name_score * 0.30) + (volume_score * 0.20) + (type_score * 0.10)
 
-    if len(key) >= 2 and coverage < 0.75:
-        return 0.0
+    breakdown = {
+        "brand": round(brand_score, 1),
+        "name": round(name_score, 1),
+        "volume": round(volume_score, 1),
+        "type": round(type_score, 1),
+    }
+    return round(final, 1), breakdown
 
-    if len(key) >= 2:
-        primary = next((t for t in key if not re.match(r"^\d", t)), None)
-        if primary and not _term_present(primary, p_norm):
-            return 0.0
 
-    final = base * (0.5 + 0.5 * coverage)
-    return final
+def product_score(query: str, product_name: str) -> float:
+    score, _ = product_score_v2(query, product_name)
+    return score
 
 
 def filter_products(query: str, products: list, min_score: float = 55.0) -> list:

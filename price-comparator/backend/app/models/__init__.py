@@ -5,3 +5,4 @@ from app.models.product import ProductGroup, MarketProduct, PriceHistory, Scrapi
 from app.models.category import Category  # noqa
 from app.models.product import PriceAlert  # noqa
 from app.models.search_history import SearchHistory  # noqa
+from app.models.access_log import AccessLog  # noqa

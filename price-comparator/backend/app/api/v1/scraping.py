@@ -76,3 +76,14 @@ async def get_job(
     if not job:
         raise HTTPException(404, "Job não encontrado")
     return job
+
+
+@router.post("/normalize-products")
+async def normalize_products(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_admin),
+):
+    """Trigger re-normalization of all existing products."""
+    from app.workers.tasks import normalize_existing_products
+    normalize_existing_products.delay()
+    return {"message": "Re-normalização iniciada em background"}

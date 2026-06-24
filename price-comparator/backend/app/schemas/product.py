@@ -22,6 +22,7 @@ class ProductResult(BaseModel):
     difference: Decimal | None = None
     difference_pct: float | None = None
     is_cheapest: bool = False
+    confidence_score: float | None = None
 
     @field_serializer("price")
     def _price(self, v: Decimal) -> float:

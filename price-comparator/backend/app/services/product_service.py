@@ -146,7 +146,11 @@ async def _live_search(
             )
 
     # Filtrar por relevância e compatibilidade de quantidade
-    return filter_products(query, all_results)
+    from app.scrapers.search_utils import product_score
+    filtered = filter_products(query, all_results)
+    for r in filtered:
+        r.confidence_score = round(product_score(query, r.product_name), 1)
+    return filtered
 
 
 async def _db_search(
@@ -225,6 +229,9 @@ async def _db_search(
 
     if not relevant:
         return []
+
+    for c, s in relevant:
+        c.confidence_score = round(s, 1)
 
     relevant.sort(key=lambda x: float(x[0].price))
     results = [c for c, _ in relevant]
