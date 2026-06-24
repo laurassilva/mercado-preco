@@ -3,4 +3,4 @@ dockerfilePath = "Dockerfile"
 
 [deploy]
 startCommand = "bash start.sh"
-healthcheckPath = "/docs"
+healthcheckPath = "/health"

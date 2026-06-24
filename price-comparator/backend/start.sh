@@ -1,20 +1,26 @@
 #!/bin/bash
 set -e
 
+echo "=== Starting Price Comparator Backend ==="
+
 # Run migrations
+echo "Running migrations..."
 alembic upgrade head
 
-# Seed database (cria admin + 8 mercados)
+# Seed database (cria admin + mercados)
+echo "Seeding database..."
 python -m app.seeds || true
 
-# Start Celery worker in background
-celery -A app.workers.celery_app worker --loglevel=info --concurrency=2 &
+# Start Celery only if Redis is reachable
+if python -c "import redis; r = redis.from_url('${REDIS_URL:-redis://localhost:6379/0}'); r.ping(); print('Redis OK')" 2>/dev/null; then
+    echo "Starting Celery worker..."
+    celery -A app.workers.celery_app worker --loglevel=info --concurrency=2 &
 
-# Start Celery beat in background
-celery -A app.workers.celery_app beat --loglevel=info --scheduler celery.beat:PersistentScheduler &
+    echo "Starting Celery beat..."
+    celery -A app.workers.celery_app beat --loglevel=info --scheduler celery.beat:PersistentScheduler &
 
-# Aguarda worker iniciar, depois dispara crawl inicial se banco estiver vazio
-(sleep 15 && python -c "
+    # Dispara crawl inicial se banco estiver vazio
+    (sleep 15 && python -c "
 import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy import select, func
@@ -32,10 +38,14 @@ async def check():
         print(f'Banco com apenas {count} produtos — disparando coleta inicial...')
         crawl_all_products.delay(None)
     else:
-        print(f'Banco já tem {count} produtos — coleta inicial não necessária.')
+        print(f'Banco ja tem {count} produtos — coleta inicial nao necessaria.')
 
 asyncio.run(check())
 " || true) &
+else
+    echo "WARNING: Redis not reachable — Celery workers disabled (scraping will not run)"
+fi
 
 # Start FastAPI
+echo "Starting uvicorn on port ${PORT:-8000}..."
 exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}

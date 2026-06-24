@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional
+from pydantic import model_validator
 
 
 class Settings(BaseSettings):
@@ -7,7 +7,7 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://priceuser:pricepassword@localhost:5432/pricecomparator"
-    SYNC_DATABASE_URL: str = "postgresql+psycopg2://priceuser:pricepassword@localhost:5432/pricecomparator"
+    SYNC_DATABASE_URL: str = ""
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -38,6 +38,27 @@ class Settings(BaseSettings):
         "http://localhost:80",
         "http://localhost",
     ]
+
+    @model_validator(mode="after")
+    def fix_database_urls(self):
+        url = self.DATABASE_URL
+        for prefix in ("postgres://", "postgresql://"):
+            if url.startswith(prefix) and "+" not in url.split("://")[0]:
+                url = "postgresql+asyncpg://" + url[len(prefix):]
+                break
+        self.DATABASE_URL = url
+        if not self.SYNC_DATABASE_URL:
+            self.SYNC_DATABASE_URL = url.replace("+asyncpg", "+psycopg2")
+        else:
+            sync = self.SYNC_DATABASE_URL
+            for prefix in ("postgres://", "postgresql://"):
+                if sync.startswith(prefix) and "+" not in sync.split("://")[0]:
+                    sync = "postgresql+psycopg2://" + sync[len(prefix):]
+                    break
+            if "+asyncpg" in sync:
+                sync = sync.replace("+asyncpg", "+psycopg2")
+            self.SYNC_DATABASE_URL = sync
+        return self
 
 
 settings = Settings()
