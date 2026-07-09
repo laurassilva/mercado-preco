@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, Search, ShoppingCart, History,
   FileText, Users, Activity, LogOut, ShoppingBag, X,
-  Bell, Tag, Layers, Settings,
+  Bell, Tag, Layers, Settings, Upload, ClipboardCheck,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { logout } from '@/services/auth'
@@ -24,7 +24,9 @@ const adminItems = [
   { href: '/users', label: 'Usuários', icon: Users },
   { href: '/scraping', label: 'Coleta', icon: Activity },
   { href: '/categories', label: 'Categorias', icon: Tag },
-  { href: '/product-groups', label: 'Produtos Mestre', icon: Layers },
+  { href: '/master-products', label: 'Catálogo Mestre', icon: Layers },
+  { href: '/master-products/import', label: 'Importar GTIN', icon: Upload },
+  { href: '/master-products/reviews', label: 'Fila de Revisão', icon: ClipboardCheck },
 ]
 
 interface Props {

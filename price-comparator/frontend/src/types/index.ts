@@ -80,6 +80,16 @@ export interface DashboardStats {
   last_update: string | null
   cheapest_market: string | null
   most_expensive_market: string | null
+  total_master_products: number
+  matched_count: number
+  pending_review_count: number
+  unmatched_count: number
+  new_market_products_24h: number
+}
+
+export interface PriceUpdatesByDay {
+  date: string
+  count: number
 }
 
 export interface MarketSummary {
@@ -97,6 +107,7 @@ export interface DashboardData {
     user_name: string | null
   }>
   market_summary: MarketSummary[]
+  price_updates_by_day: PriceUpdatesByDay[]
 }
 
 export interface ScrapingJob {
@@ -169,38 +180,82 @@ export interface ProductPriceHistory {
   history: PriceHistoryEntry[]
 }
 
-// Product Groups (Produto Mestre)
-export interface ProductGroupSummary {
+// Catálogo Mestre de Produtos (GTIN)
+export interface MasterProductSummary {
   id: string
   canonical_name: string
+  gtin: string | null
   brand: string | null
+  manufacturer: string | null
   quantity: string | null
   category: string | null
+  subcategory: string | null
+  image_url: string | null
   market_count: number
   min_price: number | null
   max_price: number | null
   avg_price: number | null
 }
 
-export interface ProductGroupPrices {
-  group_id: string
-  products: Array<{
-    id: string
-    market_name: string
-    product_name: string
-    brand: string | null
-    price: number | null
-    image_url: string | null
-    product_url: string | null
-    last_updated: string | null
-  }>
+export interface MasterProductOffer {
+  market_product_id: string
+  market_id: string
+  market_name: string
+  market_logo: string | null
+  product_name: string
+  price: number | null
+  original_price: number | null
+  is_promotion: boolean
+  product_url: string | null
+  last_updated: string | null
+  difference: number | null
+  difference_pct: number | null
+  is_cheapest: boolean
+  history: Array<{ price: number; checked_at: string }>
 }
 
-export interface GroupingStats {
-  total_groups: number
-  total_grouped: number
-  total_ungrouped: number
-  multi_market_groups: number
+export interface MasterProductOffers {
+  master_product_id: string
+  canonical_name: string
+  gtin: string | null
+  brand: string | null
+  image_url: string | null
+  offers: MasterProductOffer[]
+}
+
+export interface MasterProductStats {
+  total_master_products: number
+  matched_count: number
+  pending_review_count: number
+  unmatched_count: number
+  multi_market_products: number
+}
+
+export interface MasterProductImportBatch {
+  id: string
+  filename: string | null
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  total_rows: number
+  inserted_count: number
+  updated_count: number
+  error_count: number
+  errors: Array<{ row: number; message: string }> | null
+  started_at: string | null
+  finished_at: string | null
+  created_at: string
+}
+
+export interface ProductMatchReviewItem {
+  id: string
+  market_product_id: string
+  market_product_name: string
+  market_name: string
+  candidate_master_product_id: string | null
+  candidate_canonical_name: string | null
+  suggested_gtin: string | null
+  similarity_score: number | null
+  status: string
+  created_at: string
 }
 
 export interface AccessLog {

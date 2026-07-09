@@ -8,10 +8,10 @@ from sqlalchemy import select, func, and_
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.market import Market
-from app.models.product import MarketProduct
+from app.models.product import MarketProduct, MasterProduct, PriceHistory
 from app.models.search_history import SearchHistory
 from app.models.user import User
-from app.schemas.dashboard import DashboardResponse, DashboardStats, RecentSearch, MarketSummary
+from app.schemas.dashboard import DashboardResponse, DashboardStats, RecentSearch, MarketSummary, PriceUpdatesByDay
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
@@ -30,6 +30,36 @@ async def dashboard(db: AsyncSession = Depends(get_db), _=Depends(get_current_us
         select(MarketProduct.last_updated).order_by(MarketProduct.last_updated.desc()).limit(1)
     )
     last_update = last_update_row.scalar_one_or_none()
+
+    # Catálogo Mestre: indicadores de vínculo/curadoria
+    total_master_products = (await db.execute(select(func.count()).select_from(MasterProduct))).scalar() or 0
+    matched_count = (await db.execute(
+        select(func.count()).select_from(MarketProduct)
+        .where(MarketProduct.match_status.in_(["matched_gtin", "matched_similarity", "matched_legacy"]))
+    )).scalar() or 0
+    pending_review_count = (await db.execute(
+        select(func.count()).select_from(MarketProduct).where(MarketProduct.match_status == "pending_review")
+    )).scalar() or 0
+    unmatched_count = (await db.execute(
+        select(func.count()).select_from(MarketProduct).where(MarketProduct.match_status == "unmatched")
+    )).scalar() or 0
+    day_ago = datetime.now(timezone.utc) - timedelta(hours=24)
+    new_market_products_24h = (await db.execute(
+        select(func.count()).select_from(MarketProduct).where(MarketProduct.created_at >= day_ago)
+    )).scalar() or 0
+
+    # Preços atualizados por dia (últimos 7 dias)
+    week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+    updates_by_day_q = (
+        select(func.date(PriceHistory.checked_at).label("day"), func.count(PriceHistory.id).label("count"))
+        .where(PriceHistory.checked_at >= week_ago)
+        .group_by(func.date(PriceHistory.checked_at))
+        .order_by(func.date(PriceHistory.checked_at))
+    )
+    updates_by_day_result = await db.execute(updates_by_day_q)
+    price_updates_by_day = [
+        PriceUpdatesByDay(date=row.day.isoformat(), count=row.count) for row in updates_by_day_result.all()
+    ]
 
     # Market summary: avg price per market
     market_stats_q = (
@@ -82,7 +112,13 @@ async def dashboard(db: AsyncSession = Depends(get_db), _=Depends(get_current_us
             last_update=last_update,
             cheapest_market=cheapest,
             most_expensive_market=priciest,
+            total_master_products=total_master_products,
+            matched_count=matched_count,
+            pending_review_count=pending_review_count,
+            unmatched_count=unmatched_count,
+            new_market_products_24h=new_market_products_24h,
         ),
         recent_searches=recent_searches,
         market_summary=market_summary,
+        price_updates_by_day=price_updates_by_day,
     )

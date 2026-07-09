@@ -25,3 +25,5 @@ Thumbs.db
 
 celerybeat-schedule
 celerybeat.pid
+
+backend/uploads/

@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Package, ShoppingCart, Search, Clock, TrendingDown, TrendingUp, Bell, Tag } from 'lucide-react'
+import Link from 'next/link'
+import { Package, ShoppingCart, Search, Clock, TrendingDown, TrendingUp, Bell, Tag, Layers, Link2, ClipboardCheck, HelpCircle } from 'lucide-react'
 import AuthGuard from '@/components/layout/AuthGuard'
 import StatsCard from '@/components/dashboard/StatsCard'
 import PriceChart from '@/components/dashboard/PriceChart'
@@ -57,6 +58,45 @@ export default function DashboardPage() {
               icon={Clock}
               color="yellow"
             />
+          </div>
+
+          {/* Catálogo Mestre */}
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-center gap-2">
+              <Layers className="w-5 h-5 text-blue-600 flex-shrink-0" />
+              <div>
+                <p className="text-xs text-blue-600 font-medium">Produtos Mestre</p>
+                <p className="font-bold text-blue-800 text-lg">{data?.stats.total_master_products ?? 0}</p>
+              </div>
+            </div>
+            <div className="bg-green-50 border border-green-200 rounded-xl p-3 flex items-center gap-2">
+              <Link2 className="w-5 h-5 text-green-600 flex-shrink-0" />
+              <div>
+                <p className="text-xs text-green-600 font-medium">Vinculados</p>
+                <p className="font-bold text-green-800 text-lg">{data?.stats.matched_count ?? 0}</p>
+              </div>
+            </div>
+            <Link href="/master-products/reviews" className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2 hover:bg-amber-100 transition-colors">
+              <ClipboardCheck className="w-5 h-5 text-amber-600 flex-shrink-0" />
+              <div>
+                <p className="text-xs text-amber-600 font-medium">Pendentes de Revisão</p>
+                <p className="font-bold text-amber-800 text-lg">{data?.stats.pending_review_count ?? 0}</p>
+              </div>
+            </Link>
+            <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 flex items-center gap-2">
+              <HelpCircle className="w-5 h-5 text-gray-500 flex-shrink-0" />
+              <div>
+                <p className="text-xs text-gray-600 font-medium">Sem Vínculo</p>
+                <p className="font-bold text-gray-800 text-lg">{data?.stats.unmatched_count ?? 0}</p>
+              </div>
+            </div>
+            <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 flex items-center gap-2">
+              <Package className="w-5 h-5 text-purple-600 flex-shrink-0" />
+              <div>
+                <p className="text-xs text-purple-600 font-medium">Novos (24h)</p>
+                <p className="font-bold text-purple-800 text-lg">{data?.stats.new_market_products_24h ?? 0}</p>
+              </div>
+            </div>
           </div>
 
           {/* Best/Worst market */}
@@ -136,6 +176,28 @@ export default function DashboardPage() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+
+          {/* Atualizações de preço por dia */}
+          {(data?.price_updates_by_day?.length ?? 0) > 0 && (
+            <div className="card">
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">Atualizações de Preço (últimos 7 dias)</h3>
+              <div className="flex items-end gap-2 h-24">
+                {data?.price_updates_by_day.map((d) => {
+                  const max = Math.max(...data.price_updates_by_day.map(x => x.count), 1)
+                  return (
+                    <div key={d.date} className="flex-1 flex flex-col items-center gap-1">
+                      <div
+                        className="w-full bg-brand-400 rounded-t"
+                        style={{ height: `${Math.max((d.count / max) * 100, 4)}%` }}
+                        title={`${d.count} atualizações`}
+                      />
+                      <p className="text-[10px] text-gray-400">{d.date.slice(5)}</p>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}

@@ -79,6 +79,22 @@ class PriceHistoryResponse(BaseModel):
         return float(v)
 
 
+class MasterProductImportBatchResponse(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    filename: str | None
+    status: str
+    total_rows: int
+    inserted_count: int
+    updated_count: int
+    error_count: int
+    errors: list | None = None
+    started_at: datetime | None
+    finished_at: datetime | None
+    created_at: datetime
+
+
 class ScrapingJobCreate(BaseModel):
     market_ids: list[uuid.UUID] | None = None
     query: str

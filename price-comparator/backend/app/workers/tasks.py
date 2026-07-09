@@ -181,9 +181,10 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
     """
     from decimal import Decimal
     from sqlalchemy import select, text
-    from app.models.product import MarketProduct, PriceHistory, PriceAlert
+    from app.models.product import MarketProduct, PriceHistory, PriceAlert, ProductMatchReview
     from app.normalizer.product_normalizer import title_case, parse_product
     from app.services.category_service import classify_product, load_categories
+    from app.services.product_matching_service import load_matcher
 
     if not products:
         return 0, 0
@@ -196,6 +197,9 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
     except Exception:
         cat_dict = {}
 
+    # Catálogo mestre pré-carregado em memória — matching O(1)+fuzzy sem consulta por produto
+    matcher = await load_matcher(db)
+
     existing_by_url = {}
     existing_by_name = {}
     result = await db.execute(
@@ -206,11 +210,21 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
             existing_by_url[mp.product_url] = mp
         existing_by_name[(str(market_id), mp.name)] = mp
 
+    # Junção por market_id em vez de IN (lista de ids) — evita estourar o limite de
+    # parâmetros do driver quando o mercado tem um catálogo grande.
+    result = await db.execute(
+        select(ProductMatchReview)
+        .join(MarketProduct, ProductMatchReview.market_product_id == MarketProduct.id)
+        .where(MarketProduct.market_id == market_id, ProductMatchReview.status == "pending")
+    )
+    existing_reviews_by_mp = {r.market_product_id: r for r in result.scalars().all()}
+
     inserted = 0
     updated = 0
     batch_new: list[MarketProduct] = []
     batch_history: list[PriceHistory] = []
     batch_alerts: list[PriceAlert] = []
+    pending_reviews: list[tuple] = []  # (market_product, master_product, score)
 
     for p in products:
         try:
@@ -265,6 +279,23 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
                 mp.is_combo = parsed.is_combo
                 mp.pack_quantity = parsed.pack_quantity or mp.pack_quantity
                 mp.normalized_at = now
+
+                # Só tenta (re)vincular ao catálogo mestre se ainda não foi resolvido —
+                # nunca sobrescreve um vínculo já confirmado (GTIN, similaridade ou revisão manual).
+                if mp.master_product_id is None and mp.match_status in ("unmatched", "pending_review"):
+                    master, status, score = matcher.match(clean_name, mp.gtin)
+                    if status in ("matched_gtin", "matched_similarity"):
+                        mp.master_product_id = master.id
+                        mp.match_status = status
+                        mp.match_confidence = Decimal(str(score))
+                        mp.matched_at = now
+                    elif status == "pending_review":
+                        mp.match_status = status
+                        mp.match_confidence = Decimal(str(score))
+                        pending_reviews.append((mp, master, score))
+                    else:
+                        mp.match_status = "unmatched"
+
                 updated += 1
             else:
                 category = classify_product(clean_name, cat_dict) if cat_dict else None
@@ -289,6 +320,18 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
                     pack_quantity=parsed.pack_quantity,
                     normalized_at=now,
                 )
+
+                master, status, score = matcher.match(clean_name, None)
+                if status in ("matched_gtin", "matched_similarity"):
+                    new_mp.master_product_id = master.id
+                    new_mp.match_status = status
+                    new_mp.match_confidence = Decimal(str(score))
+                    new_mp.matched_at = now
+                elif status == "pending_review":
+                    new_mp.match_status = status
+                    new_mp.match_confidence = Decimal(str(score))
+                    pending_reviews.append((new_mp, master, score))
+
                 batch_new.append(new_mp)
                 if p.product_url:
                     existing_by_url[p.product_url] = new_mp
@@ -317,9 +360,86 @@ async def _save_products_bulk(db, market_id, products) -> tuple[int, int]:
         batch_alerts = [a for a in batch_alerts if a.market_product_id is not None]
         db.add_all(batch_alerts)
 
+    for mp, master, score in pending_reviews:
+        review = existing_reviews_by_mp.get(mp.id)
+        if review is None:
+            review = ProductMatchReview(market_product_id=mp.id)
+            db.add(review)
+        review.candidate_master_product_id = master.id
+        review.similarity_score = Decimal(str(score))
+        review.match_reasons = {"query": mp.name, "candidate": master.canonical_name}
+
     await db.flush()
 
     return inserted, updated
+
+
+# ─── Tarefa: importação da planilha mestre de GTIN ──────────────────────────
+
+@celery_app.task(bind=True, name="app.workers.tasks.import_master_products")
+def import_master_products(self, batch_id: str, file_path: str):
+    return run_async(_import_master_products_async(batch_id, file_path))
+
+
+async def _import_master_products_async(batch_id: str, file_path: str):
+    import os
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from sqlalchemy import select
+    from app.core.config import settings
+    from app.models.product import MasterProductImportBatch
+    from app.services.master_product_importer import import_master_products_from_xlsx
+
+    engine = create_async_engine(settings.DATABASE_URL)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+
+    try:
+        async with Session() as db:
+            result = await db.execute(
+                select(MasterProductImportBatch).where(MasterProductImportBatch.id == batch_id)
+            )
+            batch = result.scalar_one_or_none()
+            if not batch:
+                return
+
+            try:
+                with open(file_path, "rb") as f:
+                    file_bytes = f.read()
+                await import_master_products_from_xlsx(db, batch, file_bytes)
+            except Exception as exc:
+                logger.error("Falha ao importar planilha mestre: %s", exc, exc_info=True)
+                await db.rollback()
+                batch.status = "failed"
+                batch.errors = [{"row": 0, "message": str(exc)[:500]}]
+                batch.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+    finally:
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
+        await engine.dispose()
+
+
+# ─── Tarefa: reprocessamento do motor de matching contra o catálogo mestre ──
+
+@celery_app.task(name="app.workers.tasks.reprocess_unmatched_task")
+def reprocess_unmatched_task():
+    return run_async(_reprocess_unmatched_async())
+
+
+async def _reprocess_unmatched_async():
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from app.core.config import settings
+    from app.services.product_matching_service import reprocess_unmatched
+
+    engine = create_async_engine(settings.DATABASE_URL)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with Session() as db:
+        stats = await reprocess_unmatched(db)
+
+    await engine.dispose()
+    return stats
 
 
 # ─── Agendamento automático ──────────────────────────────────────────────────

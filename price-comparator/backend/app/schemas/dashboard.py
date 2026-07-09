@@ -10,6 +10,16 @@ class DashboardStats(BaseModel):
     last_update: datetime | None
     cheapest_market: str | None
     most_expensive_market: str | None
+    total_master_products: int
+    matched_count: int
+    pending_review_count: int
+    unmatched_count: int
+    new_market_products_24h: int
+
+
+class PriceUpdatesByDay(BaseModel):
+    date: str
+    count: int
 
 
 class RecentSearch(BaseModel):
@@ -29,3 +39,4 @@ class DashboardResponse(BaseModel):
     stats: DashboardStats
     recent_searches: list[RecentSearch]
     market_summary: list[MarketSummary]
+    price_updates_by_day: list[PriceUpdatesByDay]
